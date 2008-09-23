@@ -7,6 +7,7 @@
 #include <map>
 
 #include <stdio.h>
+#include <stdlib.h>
 
 #include <unistd.h> // For getuid/setuid
 #include <sys/types.h>
