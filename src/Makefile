@@ -1,6 +1,8 @@
 CXX=g++
 LD=g++
 JUTILDIR=../jutil
+CXXFLAGS += `pkg-config --cflags gtkmm-2.4` -g -Wall -Werror -I$(JUTILDIR)
+LDFLAGS += `pkg-config --libs gtkmm-2.4` -lpcre -ljutil -L$(JUTILDIR)
 
 #CXXFLAGS += -pg
 #LDFLAGS += -pg
@@ -11,13 +13,11 @@ JUTILDIR=../jutil
 
 EXMAP_OBJ=Exmap.o Range.o Elf.o
 
-CXXFLAGS += -g -Wall -Werror -I$(JUTILDIR)
-LDFLAGS += -lpcre -ljutil -L$(JUTILDIR)
-
-GTKCXXFLAGS = `pkg-config --cflags gtkmm-2.4`
-GTKLDFLAGS = `pkg-config --libs gtkmm-2.4`
-
 # ------------------------------------------------------------
+
+GEM_OBJ =  gexmap.o $(EXMAP_OBJ)
+OBJS += $(GEM_OBJ)
+EXES += gexmap
 
 CL_OBJ =  exmtool.o $(EXMAP_OBJ)
 OBJS += $(CL_OBJ)
@@ -30,10 +30,6 @@ EXES += elftool
 SP_OBJ = showproc.o $(EXMAP_OBJ)
 OBJS += $(SP_OBJ)
 EXES += showproc
-
-GEM_OBJ =  gexmap.o $(EXMAP_OBJ)
-OBJS += $(GEM_OBJ)
-EXES += gexmap
 
 # ------------------------------------------------------------
 
@@ -76,10 +72,7 @@ test: $(TESTS) $(EXES) $(SHLIBS)
 	$(JUTILDIR)/trun $(TESTS)
 
 gexmap: $(GEM_OBJ)
-	$(LD) -o gexmap $(GEM_OBJ) $(LDFLAGS) $(GTKLDFLAGS)
-
-gexmap.o: gexmap.cpp
-	$(CC) $(CXXFLAGS) $(GTKCXXFLAGS) -c $<
+	$(LD) -o gexmap $(GEM_OBJ) $(LDFLAGS) 
 
 exmtool: $(CL_OBJ)
 	$(LD) -o exmtool $(CL_OBJ) $(LDFLAGS) 
