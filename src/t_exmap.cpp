@@ -28,8 +28,6 @@ private:
     static const int NUM_ARRAYS = 10;
     std::list<FILE *> _popen_handles;
 
-    unsigned long get_map_alignment(const Elf::FilePtr &elf);
-
     struct array_info
     {
 	std::string name;
@@ -152,11 +150,11 @@ bool ExmapTest::run()
 	}
     }
     ok(!failed_to_get_sizes, "can get sizes for every file");
-    is((int) files.size(), 1, "file only listed once");
-    FilePtr file = files.front();
-    ok(file->is_elf(), "file recognised as elf file");
+    is((int) files.size(), 1, "shared lib only listed once");
+    FilePtr shlib_file = files.front();
+    ok(shlib_file->is_elf(), "shared lib recognised as elf file");
 
-    list<ProcessPtr> procs_per_file = file->procs();
+    list<ProcessPtr> procs_per_file = shlib_file->procs();
     is((int) procs_per_file.size(), NUM_INSTANCES,
        "right number of procs mapping the file");
     for (proc_it = procs_per_file.begin();
@@ -165,22 +163,20 @@ bool ExmapTest::run()
 	ok(proc->cmdline() == SA_EXE, "each proc has correct cmdline");
     }
 
-
-    unsigned long map_alignment = get_map_alignment(file->elf());
-
     for (proc_it = procs.begin();
 	 proc_it != procs.end();
 	 ++proc_it) {
-	sizes = proc->sizes(file);
-	is_approx_rel(sizes->val(Sizes::VM),
-		      (double) NUM_ARRAYS * (double) ARRAY_SIZE + map_alignment,
-		      0.01, "Shared lib has correct size in each proc");
+	sizes = proc->sizes(shlib_file);
+	long arrays_size = NUM_ARRAYS * ARRAY_SIZE;
+	float delta = std::abs(arrays_size - (long) sizes->val(Sizes::VM));
+	delta /= arrays_size;
+	ok(delta < 0.01, "Shared lib has correct size in each proc");
     }
     
-    Elf::SectionPtr text = file->elf()->section(".text");
+    Elf::SectionPtr text = shlib_file->elf()->section(".text");
     ok(text, "can find text section");
     ok(text->size() > 0, "text section has nonzero size");
-    sizes = procs.front()->sizes(file, text->mem_range());
+    sizes = procs.front()->sizes(shlib_file, text->mem_range());
     /// This appears to be compiler and system dependent...
     /*
     is_approx_rel(sizes->val(Sizes::RESIDENT),
@@ -189,16 +185,16 @@ bool ExmapTest::run()
 		  "lib text is resident and mapped twice (!)");
 		  */
     
-    Elf::SectionPtr bss = file->elf()->section(".bss");
+    Elf::SectionPtr bss = shlib_file->elf()->section(".bss");
     ok(bss, "can find bss section");
     ok(bss->size() > 0, "bss section has nonzero size");
-    SizesPtr bss_sizes = procs.front()->sizes(file, bss->mem_range());
+    SizesPtr bss_sizes = procs.front()->sizes(shlib_file, bss->mem_range());
     ok(bss_sizes, "can get sizes for bss section");
 
-    Elf::SectionPtr data = file->elf()->section(".data");
+    Elf::SectionPtr data = shlib_file->elf()->section(".data");
     ok(data, "can find data section");
     ok(data->size() > 0, "data section has nonzero size");
-    SizesPtr data_sizes = procs.front()->sizes(file, data->mem_range());
+    SizesPtr data_sizes = procs.front()->sizes(shlib_file, data->mem_range());
     ok(data_sizes, "can get sizes for data section");
 
     is(data->size(), bss->size(), "data and bss sections have same size");
@@ -213,6 +209,15 @@ bool ExmapTest::run()
 	      Elf::page_size(),
 	      "data and bss resident within page of each other");
 
+    // Now get the all-proc sizes from the file
+    sizes = shlib_file->sizes(bss->mem_range());
+    // The totals should be a multiple of the individual
+    is(sizes->val(Sizes::RESIDENT),
+	    bss_sizes->val(Sizes::RESIDENT) * NUM_INSTANCES,
+	    "Total resident for all procs the same as multiplying up one proc");
+    is(sizes->val(Sizes::MAPPED),
+	    bss_sizes->val(Sizes::MAPPED) * NUM_INSTANCES,
+	    "Total mapped for all procs the same as multiplying up one proc");
 
     double bss_resident_arrays_size = 0;
     double data_resident_arrays_size = 0;
@@ -237,7 +242,7 @@ bool ExmapTest::run()
 	 proc_it != procs.end();
 	 ++proc_it) {
 	
-	sizes = proc->sizes(file, data->mem_range());
+	sizes = proc->sizes(shlib_file, data->mem_range());
 	is_approx(sizes->val(Sizes::RESIDENT),
 		  data_resident_arrays_size,
 		  Elf::page_size(),
@@ -247,7 +252,7 @@ bool ExmapTest::run()
 		  Elf::page_size(),
 		  "writable size for data in proc correct with a page");
 	
-	sizes = proc->sizes(file, bss->mem_range());
+	sizes = proc->sizes(shlib_file, bss->mem_range());
 	is_approx_rel(sizes->val(Sizes::RESIDENT),
 		      bss_resident_arrays_size,
 		      0.001,
@@ -262,11 +267,11 @@ bool ExmapTest::run()
     for (int i = 0; i < NUM_ARRAYS; ++i) {
 	const struct array_info *info = ARRAY_INFO + i;
 	string symname = info->name;
-	Elf::SymbolPtr sym = file->elf()->symbol(symname);
+	Elf::SymbolPtr sym = shlib_file->elf()->symbol(symname);
 	ok(sym, "can find symbol " + symname);
 	is(sym->size(), ARRAY_SIZE, symname + " has correct size");
 	
-	sizes = proc->sizes(file, sym->range());
+	sizes = proc->sizes(shlib_file, sym->range());
 	is_approx_rel((int) sizes->val(Sizes::RESIDENT),
 		      ARRAY_SIZE * info->resident_percent / 100,
 		      0.001,
@@ -320,9 +325,9 @@ bool ExmapTest::run()
 	}
     }
     is((int) files.size(), 1, MI_DAT + " file only listed once");
-    file = files.front();
+    FilePtr mapped_file = files.front();
 
-    ok(!file->is_elf(), MI_DAT + " isn't an elf file");
+    ok(!mapped_file->is_elf(), MI_DAT + " isn't an elf file");
     off_t fsize = 0;
     double mi_data_size = 0;
     ok(file_size(MI_DAT, fsize), "can get file size");
@@ -332,7 +337,7 @@ bool ExmapTest::run()
     for (proc_it = procs.begin();
 	 proc_it != procs.end();
 	 ++proc_it) {
-	sizes = (*proc_it)->sizes(file);
+	sizes = (*proc_it)->sizes(mapped_file);
 	is_approx_rel(sizes->val(Sizes::VM),
 		      mi_data_size,
 		      0.001,
@@ -353,7 +358,7 @@ bool ExmapTest::run()
 
 bool ExmapTest::setup()
 {
-    plan(197);
+    plan(198);
     
     const string ld_path_env = "LD_LIBRARY_PATH";
     const char *cp = getenv(ld_path_env.c_str());
@@ -413,28 +418,3 @@ double ExmapTest::get_pid_size_from_ps(pid_t pid)
 }
 
 RUN_TEST_CLASS(ExmapTest);
-
-unsigned long ExmapTest::get_map_alignment(const Elf::FilePtr &elf)
-{
-    list<Elf::SegmentPtr> segs = elf->loadable_segments();
-    list<Elf::SegmentPtr>::iterator it;
-    unsigned long alignment = 0;
-    bool all_aligns_the_same = true;
-
-    for (it = segs.begin(); it != segs.end(); ++it) {
-	if (alignment == 0) {
-	    // Get the alignment
-	    alignment = (*it)->align();
-	}
-	else {
-	    // Check they're all the same
-	    if (alignment != (*it)->align()) {
-		all_aligns_the_same = false;
-	    }
-	}
-    }
-
-    ok(all_aligns_the_same,
-       "ELF file has all loadable segments with same alignment\n");
-    return alignment;
-}

@@ -41,7 +41,7 @@ Address Elf::page_align_up(const Address &addr)
 // ------------------------------------------------------------
 
 File::File()
-    : _lazy_load_sections(false)
+    : _started_lazy_load_sections(false)
 { }
 
 unsigned long File::elf_file_type()
@@ -79,7 +79,7 @@ bool File::load(const string &fname, bool warn_if_non_elf)
      
 void File::unload(void)
 {
-    _lazy_load_sections = false;
+    _started_lazy_load_sections = false;
     _ifs.clear();
     _ifs.close();
     _fname.clear();
@@ -251,10 +251,10 @@ bool File::is_shared_object()
 bool File::lazy_load_sections()
 {
     // Stop possible recursion
-    if (_lazy_load_sections) {
+    if (_started_lazy_load_sections) {
 	return true;
     }
-    _lazy_load_sections = true;
+    _started_lazy_load_sections = true;
     if (!load_sections()) { return false; }
     return correlate_string_sections();
 }
@@ -306,11 +306,13 @@ bool File::correlate_string_sections()
 
     for (it = _sections.begin(); it != _sections.end(); ++it) {
 	(*it)->set_name(_ifs, string_table);
-	if ((*it)->is_symbol_table()) {
-	    _symbol_table_section = *it;
-	    SectionPtr string_table = section((*it)->link());
-	    (*it)->load_symbols(_ifs,
-				string_table);
+	SectionPtr &sect = *it;
+	if (sect->is_symbol_table()) {
+	    if (!sect->is_dynsym_table() || !_symbol_table_section) {
+		_symbol_table_section = sect;
+	    }
+	    SectionPtr string_table = section(sect->link());
+	    sect->load_symbols(_ifs, string_table);
 	}
     }
     return true;
@@ -560,7 +562,12 @@ bool Section::is_string_table()
 
 bool Section::is_symbol_table()
 {
-    return _sectstruct->type() == SHT_SYMTAB;
+    return _sectstruct->type() == SHT_SYMTAB || is_dynsym_table();
+}
+
+bool Section::is_dynsym_table()
+{
+    return _sectstruct->type() == SHT_DYNSYM;
 }
 
 bool Section::is_nobits()
@@ -624,6 +631,7 @@ bool Section::load_symbols(std::istream &is,
 			   const SectionPtr &string_table)
 {
     if (!is_symbol_table()) {
+	warn << "Can't load symbols from non-symbol-table section\n";
 	return false;
     }
     unsigned int symentry_size = _sectstruct->entsize();

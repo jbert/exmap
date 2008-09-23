@@ -122,6 +122,7 @@ namespace Elf
 	bool is_null();
 	bool is_string_table();
 	bool is_symbol_table();
+	bool is_dynsym_table();
 	bool is_nobits();
 	std::list<SymbolPtr> symbols();
 	std::list<SymbolPtr> find_symbols_in_mem_range(const RangePtr &mrange);
@@ -137,6 +138,13 @@ namespace Elf
 	RangePtr _file_range;
 	std::list<SymbolPtr> _symbols;
 	std::string _name;
+	unsigned long _name_index;
+	unsigned long _link;
+	unsigned long _addr;
+	unsigned long _size;
+	unsigned long _offset;
+	char _type;
+	unsigned long _entsize;
     };
 
     class SegmentStructBase
@@ -280,7 +288,7 @@ namespace Elf
 	bool load_sections();
 	bool load_segments();
 
-	bool _lazy_load_sections;
+	bool _started_lazy_load_sections;
 	std::ifstream _ifs;
 	std::string _fname;
 	std::list<Elf::SegmentPtr> _segments;

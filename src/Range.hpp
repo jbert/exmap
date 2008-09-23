@@ -26,6 +26,8 @@ public:
     /// Return a newly allocated Range which is the intersection
     /// (null if intersection is empty)
     RangePtr intersect(const Range &r) const;
+    /// Same, but takes a RangePtr
+    RangePtr intersect(const RangePtr &r) const;
     /// True if start and end are equal
     bool operator==(const Range &r) const;
     bool operator!=(const Range &r) const { return !(*this == r); }

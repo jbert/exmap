@@ -28,6 +28,12 @@ RangePtr Range::intersect(const Range &r) const
     return RangePtr(new Range(start, end));
 }
 
+RangePtr Range::intersect(const RangePtr &r) const
+{
+    if (!r) { return RangePtr((Range *) 0); }
+    return intersect(*r);
+}
+
 bool Range::operator==(const Range &r) const
 {
     return _start == r._start && _end == r._end;

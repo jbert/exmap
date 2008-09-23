@@ -44,13 +44,19 @@ namespace Gexmap
 			   Exmap::SizesPtr &sizes);
 
 	/// Show the list view (hiding the label), and clear the store
-	void show_list();
+	void show_and_clear_list();
 
 	/// Show the label, with this text (hiding the list)
 	void show_label(const std::string &txt);
 
 	/// True if we are showing the list, false if the label
 	bool showing_list;
+
+	/// Adding a lot of data to a list can be costly, so bracket
+	/// it with calls to these funcs.
+	/// sorting with these funcs
+	void start_mass_insert();
+	void finished_mass_insert();
 	
 	Glib::RefPtr<Gtk::ListStore> _store;
 	// We display either the treeview or the errlabel
@@ -65,9 +71,11 @@ namespace Gexmap
 	Gtk::TreeModel::ColumnRecord _columns;
     private:
 	Gtk::TreeModelColumn<float> _size_columns[Exmap::Sizes::NUM_SIZES];
-	void _make_all_sortable();
+	void _make_all_sortable_and_resizeable();
 	static std::string SIZES_PRINTF_FORMAT;
 	Gtk::ScrolledWindow _scrolled_window;
+	int _saved_sort_id;
+	Gtk::SortType _saved_sort_order;
     };
     typedef boost::shared_ptr<SizeListView> SizeListViewPtr;
 
@@ -137,7 +145,9 @@ namespace Gexmap
 	Gtk::TreeModelColumn<Glib::ustring> _name;
 	Gtk::TreeModelColumn<off_t> _file_offset;
 	void set_data(const Exmap::ProcessPtr &proc,
-		      const Exmap::FilePtr &file);
+		      const Exmap::FilePtr &file,
+		      // if true, ignore proc and show totals across all
+		      bool show_all_procs = false);
 	std::string currently_selected();
     };
     
@@ -182,9 +192,14 @@ namespace Gexmap
 	void filelist_changed_cb();
 	void proclist_changed_cb();
 	void sectionlist_changed_cb();
-	
+	void all_procs_toggled_cb();
+
+	void recalc_sectionlist();
+
 	// Widgets
 	AllFileList _allfilelist;
+	Gtk::CheckButton _all_procs_checkbutton;
+	Gtk::VBox _vbox;
 	PerFileProcList _proclist;
     };
 
@@ -215,8 +230,13 @@ namespace Gexmap
 	Gtk::Label _plabel;
 	Gtk::Label _flabel;
 	Gtk::Button _quit_button;
+	Gtk::Button _about_button;
+	Gtk::Dialog _about_dialog;
+	Gtk::Label _about_label;
 	// Callbacks
 	void quit_button_clicked_cb();
+	void about_button_clicked_cb();
+	void about_dialog_response_cb(int response);
     };
     
     /// The main, toplevel window
@@ -224,6 +244,7 @@ namespace Gexmap
     {
     public:
 	TopWin(Exmap::SnapshotPtr &snapshot);
+	void load();
 	static const int WIDTH = 800;
 	static const int HEIGHT = 600;
     private:
@@ -255,32 +276,70 @@ TopWin::TopWin(SnapshotPtr &snapshot)
     _vbox.add(_notebook);
     _vbox.pack_end(_bottom_bar, false, false);
 
-    _proctab.set_data(snapshot);
-    _filetab.set_data(snapshot);
-    
     set_default_size(WIDTH, HEIGHT);
 
-    _bottom_bar.set_status(_snapshot);
     show_all();
+}
+
+void TopWin::load()
+{
+    _snapshot->load();
+    _proctab.set_data(_snapshot);
+    _filetab.set_data(_snapshot);
+    _bottom_bar.set_status(_snapshot);
 }
 
 
 // ------------------------------------------------------------
 
 BottomBar::BottomBar()
+    // Modal dialog
+    : _about_dialog("About Exmap", true)
 {
-    _quit_button.set_label("Quit");
+    _quit_button.set_label("_Quit");
+    _quit_button.set_use_underline(true);
     _quit_button.signal_clicked()
 	.connect(sigc::mem_fun(*this, &BottomBar::quit_button_clicked_cb));
+
+    _about_button.set_label("_About");
+    _about_button.set_use_underline(true);
+    _about_button.signal_clicked()
+	.connect(sigc::mem_fun(*this, &BottomBar::about_button_clicked_cb));
+
+    stringstream sstr;
+    sstr << "Exmap\n\n";
+    sstr << "a shared memory analysis utility\n\n";
+    sstr << "written by John Berthels\n\n";
+    sstr << "http://www.berthels.co.uk/exmap\n";
+    _about_label.set_text(sstr.str());
+    _about_label.set_justify(Gtk::JUSTIFY_CENTER);
+
+    _about_dialog.get_vbox()->add(_about_label);
+    _about_dialog.add_button(Gtk::Stock::OK, Gtk::RESPONSE_OK);
+    _about_dialog.signal_response()
+	.connect(sigc::mem_fun(*this, &BottomBar::about_dialog_response_cb));
 
     add(_plabel);
     add(_flabel);
     pack_end(_quit_button, false, false);
+    pack_end(_about_button, false, false);
 }
 
 void BottomBar::quit_button_clicked_cb()
 {
     Gtk::Main::quit();
+}
+
+void BottomBar::about_button_clicked_cb()
+{
+    _about_dialog.show_all();
+}
+
+void BottomBar::about_dialog_response_cb(int response)
+{
+    // Don't care what the response is...
+    (void) response;
+    _about_dialog.hide();
 }
 
 void BottomBar::set_status(SnapshotPtr &snapshot)
@@ -298,7 +357,9 @@ void BottomBar::set_status(SnapshotPtr &snapshot)
 
 SizeListView::SizeListView(const std::string &frame_name)
     : Gtk::Frame(frame_name),
-      showing_list(true)
+      showing_list(true),
+      _saved_sort_id(Gtk::TreeSortable::DEFAULT_UNSORTED_COLUMN_ID),
+      _saved_sort_order(Gtk::SORT_DESCENDING)
 {
     _hidden.add(_errlabel);
     _scrolled_window.add(_treeview);
@@ -307,6 +368,20 @@ SizeListView::SizeListView(const std::string &frame_name)
 
     _errlabel.show();
     _scrolled_window.show_all();
+}
+
+void SizeListView::finished_mass_insert()
+{
+    if (_saved_sort_id == Gtk::TreeSortable::DEFAULT_UNSORTED_COLUMN_ID) { return; }
+    _store->set_sort_column_id(_saved_sort_id, _saved_sort_order);
+    _saved_sort_id = Gtk::TreeSortable::DEFAULT_UNSORTED_COLUMN_ID;
+}
+
+void SizeListView::start_mass_insert()
+{
+    _store->get_sort_column_id(_saved_sort_id, _saved_sort_order);
+    _store->set_sort_column_id(Gtk::TreeSortable::DEFAULT_UNSORTED_COLUMN_ID,
+			       Gtk::SORT_DESCENDING);
 }
 
 Gtk::TreeView &SizeListView::listwin()
@@ -333,11 +408,11 @@ void SizeListView::init_columns()
 	}
     }
     
-    _make_all_sortable();
+    _make_all_sortable_and_resizeable();
     _store->set_sort_column_id(sort_colid, Gtk::SORT_DESCENDING);
 }
 
-void SizeListView::_make_all_sortable()
+void SizeListView::_make_all_sortable_and_resizeable()
 {
     int ncols = _columns.size();
     Gtk::TreeViewColumn *col;
@@ -345,6 +420,7 @@ void SizeListView::_make_all_sortable()
     for (int i = 0; i < ncols; ++i) {
 	col = _treeview.get_column(i);
 	col->set_sort_column(i);
+	col->set_resizable(true);
     }
     return;
 }
@@ -384,7 +460,7 @@ void SizeListView::show_label(const string &txt)
     showing_list = false;
 }
 
-void SizeListView::show_list()
+void SizeListView::show_and_clear_list()
 {
     _store->clear();
     if (showing_list) { return; }
@@ -451,8 +527,9 @@ void AllProcList::set_data(const list<ProcessPtr> &procs)
 	return;
     }
 
-    show_list();
+    show_and_clear_list();
 
+    start_mass_insert();
     for (it = procs.begin(); it != procs.end(); ++it) {
 	SizesPtr sizes = (*it)->sizes();
 	add_row((*it)->pid(),
@@ -462,6 +539,7 @@ void AllProcList::set_data(const list<ProcessPtr> &procs)
 
     SizesPtr totals = calc_totals(procs);
     add_row(0, "TOTALS", totals);
+    finished_mass_insert();
 }
 
 SizesPtr AllProcList::calc_totals(const list<ProcessPtr> &procs)
@@ -485,7 +563,11 @@ PerFileProcList::PerFileProcList()
 
 void PerFileProcList::set_data(const Exmap::FilePtr &file)
 {
-    list<ProcessPtr> procs(file->procs());
+    list<ProcessPtr> procs;
+
+    if (file) {
+	procs = file->procs();
+    }
     
     if (procs.empty()) {
 	string txt = "No processes for file " + file->name();
@@ -495,14 +577,16 @@ void PerFileProcList::set_data(const Exmap::FilePtr &file)
 
     list<Exmap::ProcessPtr>::iterator it;
 
-    show_list();
+    show_and_clear_list();
 
+    start_mass_insert();
     for (it = procs.begin(); it != procs.end(); ++it) {
 	SizesPtr sizes = (*it)->sizes(file);
 	add_row((*it)->pid(),
 		(*it)->cmdline(),
 		sizes);
     }
+    finished_mass_insert();
 }
 	
 // ------------------------------------------------------------
@@ -519,21 +603,27 @@ PerProcFileList::PerProcFileList()
 
 void PerProcFileList::set_data(const Exmap::ProcessPtr &proc)
 {
-    list<Exmap::FilePtr> files = proc->files();
+    list<Exmap::FilePtr> files;
     list<Exmap::FilePtr>::const_iterator it;
+
+    if (proc) {
+	files = proc->files();
+    }
 
     if (files.empty()) {
 	show_label("No files for process");
 	return;
     }
-    show_list();
+    show_and_clear_list();
     
+    start_mass_insert();
     for (it = files.begin(); it != files.end(); ++it) {
 	Gtk::TreeModel::Row row = *(_store->append());
 	row[_filename] = (*it)->name();
 	Exmap::SizesPtr sizes = proc->sizes(*it);
 	add_row_sizes(row, sizes);
     }
+    finished_mass_insert();
 }
 
 string PerProcFileList::currently_selected()
@@ -574,8 +664,9 @@ void AllFileList::set_data(const list<FilePtr> &files)
 	return;
     }
 
-    show_list();
+    show_and_clear_list();
     
+    start_mass_insert();
     for (it = files.begin(); it != files.end(); ++it) {
 	Gtk::TreeModel::Row row = *(_store->append());
 	row[_filename] = (*it)->name();
@@ -583,6 +674,7 @@ void AllFileList::set_data(const list<FilePtr> &files)
 	Exmap::SizesPtr sizes = (*it)->sizes();
 	add_row_sizes(row, sizes);
     }
+    finished_mass_insert();
 }
 
 string AllFileList::currently_selected()
@@ -617,28 +709,56 @@ ElfSectionList::ElfSectionList()
 }
 
 void ElfSectionList::set_data(const Exmap::ProcessPtr &proc,
-			      const Exmap::FilePtr &file)
+			      const Exmap::FilePtr &file,
+			      bool show_all_procs)
 {
     list<Elf::SectionPtr> sections;
     list<Elf::SectionPtr>::const_iterator it;
+    Exmap::SizesPtr sizes;
+    Elf::FilePtr elf;
+    string err_label;
 
-    Elf::FilePtr elf = file->elf();
-    if (!elf) {
-	string txt = file->name() + " is not an elf file";
-	show_label(txt);
+    if (!proc && !show_all_procs) {
+	if (file) {
+	    err_label = "No process selected";
+	}
+	else {
+	    err_label = "No process and file selected";
+	}
+    }
+
+    if (!file) {
+	err_label = "No file selected";
+    }
+    else {
+	elf = file->elf();
+	if (!elf) {
+	    err_label = file->name() + " is not an elf file";
+	}
+    }
+
+    if (!err_label.empty()) {
+	show_label(err_label);
 	return;
     }
 
-    show_list();
+    show_and_clear_list();
 
     sections = elf->mappable_sections();
+    start_mass_insert();
     for (it = sections.begin(); it != sections.end(); ++it) {
 	Gtk::TreeModel::Row row = *(_store->append());
 	row[_name] = (*it)->name();
 	row[_file_offset] = (*it)->file_range()->start();
-	Exmap::SizesPtr sizes = proc->sizes(file, (*it)->mem_range());
+	if (show_all_procs) {
+	    sizes = file->sizes((*it)->mem_range());
+	}
+	else {
+	    sizes = proc->sizes(file, (*it)->mem_range());
+	}
 	add_row_sizes(row, sizes);
     }
+    finished_mass_insert();
 }
 
 string ElfSectionList::currently_selected()
@@ -678,29 +798,59 @@ void ElfSymbolList::set_data(const Exmap::ProcessPtr &proc,
 {
     list<Elf::SymbolPtr> symbols;
     list<Elf::SymbolPtr>::const_iterator it;
+    Elf::FilePtr elf;
+    string err_label;
 
-    Elf::FilePtr elf = file->elf();
-    if (!elf) {
-	string txt = file->name() + " is not an elf file";
-	show_label(txt);
+    if (!proc) {
+	err_label = "No process selected";
+    }
+    else {
+	if (!file) {
+	    err_label = "No file selected";
+	}
+	else {
+	    elf = file->elf();
+	    if (!elf) {
+		err_label = file->name() + " is not an elf file";
+	    }
+	    else {
+		if (!section) {
+		    err_label = "No section selected";
+		}
+	    }
+	}
+    }
+
+    if (!err_label.empty()) {
+	show_label(err_label);
 	return;
     }
 
     symbols = elf->symbols_in_section(section);
     if (symbols.empty()) {
-	string txt = "No symbols found in " + file->name();
+	string txt = "No symbols found in section "
+	    + section->name() + " in file " + file->name();
 	show_label(txt);
 	return;
     }
 
-    show_list();
+    show_and_clear_list();
 
+    Exmap::SizesPtr sizes;
+    start_mass_insert();
     for (it = symbols.begin(); it != symbols.end(); ++it) {
 	Gtk::TreeModel::Row row = *(_store->append());
 	row[_name] = (*it)->name();
-	Exmap::SizesPtr sizes = proc->sizes(file, (*it)->range());
+	if (proc) {
+	    sizes = proc->sizes(file, (*it)->range());
+	}
+	else {
+	    // Null proc means across all processes
+	    sizes = file->sizes((*it)->range());
+	}
 	add_row_sizes(row, sizes);
     }
+    finished_mass_insert();
 }
  
 
@@ -758,14 +908,16 @@ void ProcTab::filelist_changed_cb()
 {
     pid_t pid = _allproclist.currently_selected();
     string fname = _filelist.currently_selected();
+    Exmap::ProcessPtr proc;
+    Exmap::FilePtr file;
 
     if (pid != 0 && !fname.empty()) {
-	Exmap::ProcessPtr proc = _snapshot->proc(pid);
-	Exmap::FilePtr file = _snapshot->file(fname);
-	if (proc && file) {
-	    _sectionlist.set_data(proc, file);
-	}
+	proc = _snapshot->proc(pid);
+	file = _snapshot->file(fname);
     }
+    _sectionlist.set_data(proc, file);
+    Elf::SectionPtr null_section;
+    _symlist.set_data(proc, file, null_section);
 }
 	
 void ProcTab::sectionlist_changed_cb()
@@ -774,25 +926,33 @@ void ProcTab::sectionlist_changed_cb()
     string fname = _filelist.currently_selected();
     string section_name = _sectionlist.currently_selected();
 
-    if (pid != 0 && !fname.empty()) {
-	Exmap::ProcessPtr proc = _snapshot->proc(pid);
-	Exmap::FilePtr file = _snapshot->file(fname);
+    Exmap::ProcessPtr proc;
+    Exmap::FilePtr file;
+    Elf::SectionPtr section;
+
+    if (pid != 0) {
+	proc = _snapshot->proc(pid);
+    }
+    if (!fname.empty()) {
+	file = _snapshot->file(fname);
 	Elf::FilePtr elf = file->elf();
-	if (!elf) { return; }
-	Elf::SectionPtr section = elf->section(section_name);
-	if (proc && file && section) {
-	    _symlist.set_data(proc, file, section);
+	if (elf) { 
+	    section = elf->section(section_name);
 	}
     }
+    _symlist.set_data(proc, file, section);
 }
 	
 // ------------------------------------------------------------
 
 
 FileTab::FileTab()
+	: _all_procs_checkbutton("Show sizes across _all processes", true)
 {
     _top_half.add1(_allfilelist);
-    _top_half.add2(_proclist);
+    _vbox.pack_start(_all_procs_checkbutton, false, false);
+    _vbox.add(_proclist);
+    _top_half.add2(_vbox);
 
     _allfilelist.listwin().get_selection()->signal_changed()
     	.connect(sigc::mem_fun(*this, &FileTab::filelist_changed_cb));
@@ -800,6 +960,10 @@ FileTab::FileTab()
 	.connect(sigc::mem_fun(*this, &FileTab::proclist_changed_cb));
     _sectionlist.listwin().get_selection()->signal_changed()
     	.connect(sigc::mem_fun(*this, &FileTab::sectionlist_changed_cb));
+    _all_procs_checkbutton.signal_toggled()
+	.connect(sigc::mem_fun(*this, &FileTab::all_procs_toggled_cb));
+    // Can't select all procs until you have selected a file
+    _all_procs_checkbutton.set_sensitive(false);
 }
 
 void FileTab::set_data(SnapshotPtr &snapshot)
@@ -813,43 +977,73 @@ void FileTab::filelist_changed_cb()
     string fname = _allfilelist.currently_selected();
     if (!fname.empty()) {
 	Exmap::FilePtr file = _snapshot->file(fname);
+	_all_procs_checkbutton.set_sensitive(true);
 	_proclist.set_data(file);
+    }
+    else {
+	_all_procs_checkbutton.set_sensitive(false);
     }
 }
 
 void FileTab::proclist_changed_cb()
 {
+    recalc_sectionlist();
+}
+
+void FileTab::recalc_sectionlist()
+{
     string fname = _allfilelist.currently_selected();
     pid_t pid = _proclist.currently_selected();
+    Exmap::ProcessPtr proc;
+    Exmap::FilePtr file;
+    bool show_all_procs = _all_procs_checkbutton.get_active();
 
-    if (pid != 0 && !fname.empty()) {
-	Exmap::ProcessPtr proc = _snapshot->proc(pid);
-	Exmap::FilePtr file = _snapshot->file(fname);
-	if (proc && file) {
-	    _sectionlist.set_data(proc, file);
-	}
+    if (pid != 0) {
+	proc = _snapshot->proc(pid);
     }
+    if(!fname.empty()) {
+	file = _snapshot->file(fname);
+    }
+
+    _sectionlist.set_data(proc, file, show_all_procs);
+    Elf::SectionPtr null_section;
+    _symlist.set_data(proc, file, null_section);
 }
-	
+
 void FileTab::sectionlist_changed_cb()
 {
     string fname = _allfilelist.currently_selected();
     pid_t pid = _proclist.currently_selected();
     string section_name = _sectionlist.currently_selected();
+
+    Exmap::ProcessPtr proc;
+    Exmap::FilePtr file;
+    Elf::SectionPtr section;
     
-    if (pid != 0 && !fname.empty()) {
-	Exmap::ProcessPtr proc = _snapshot->proc(pid);
-	Exmap::FilePtr file = _snapshot->file(fname);
+    if (pid != 0) {
+	proc = _snapshot->proc(pid);
+    }
+    if (!fname.empty()) {
+	file = _snapshot->file(fname);
 	Elf::FilePtr elf = file->elf();
-	if (!elf) { return; }
-	Elf::SectionPtr section = elf->section(section_name);
-	if (proc && file && section) {
-	    _symlist.set_data(proc, file, section);
+	if (elf) { 
+	    section = elf->section(section_name);
 	}
     }
+
+    _symlist.set_data(proc, file, section);
 }
     
-    // ------------------------------------------------------------
+void FileTab::all_procs_toggled_cb()
+{
+    bool checkbox_ticked = _all_procs_checkbutton.get_active();
+    // Setting sensitive like this should generate the proclist changed signal
+    // and hence the Right Thing
+    _proclist.set_sensitive(!checkbox_ticked);
+    recalc_sectionlist();
+}
+
+// ------------------------------------------------------------
 
 int main(int argc, char *argv[])
 {
@@ -859,13 +1053,10 @@ int main(int argc, char *argv[])
     Sizes::scale_kbytes();
     SysInfoPtr sysinfo(new LinuxSysInfo);
     SnapshotPtr snapshot(new Snapshot(sysinfo));
-    if (!snapshot->load()) {
-	cerr << "Failed to load snapshot - aborting" << endl;
-	return -1;
-    }
-
     TopWin topwin(snapshot);
-    
+
+    topwin.load();
+
     if (argc == 1) {
 	Gtk::Main::run(topwin);
     }

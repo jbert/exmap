@@ -185,9 +185,9 @@ namespace Exmap
     {
     public:
 	Vma(Elf::Address start,
-	    Elf::Address end,
-	    off_t offset,
-	    const std::string &fname);
+		Elf::Address end,
+		off_t offset,
+		const std::string &fname);
 
 	PagePoolPtr &page_pool();
 	
@@ -301,11 +301,16 @@ namespace Exmap
 
 	/// Sort a list of MapPtr
 	static std::list<MapPtr> sort(const std::list<MapPtr> &maplist);
+	
+	/// Return the intersection of the two lists (considered as
+	/// sets).
+	static std::list<MapPtr> intersect_lists(const std::list<MapPtr> &la,
+						 const std::list<MapPtr> &lb);
     private:
 	Elf::Address elf_to_mem_offset();
-	VmaPtr _vma;
-	RangePtr _mem_range;
-	RangePtr _elf_range;
+	const VmaPtr _vma;
+	const RangePtr _mem_range;
+	const RangePtr _elf_range;
     };
     
     /// Hold the information about one file.
@@ -324,6 +329,8 @@ namespace Exmap
 	bool is_elf();
 	/// Return the sizes for all maps over this file.
 	SizesPtr sizes();
+	/// Return the sizes for all maps in all processes over this elf range
+	SizesPtr sizes(const RangePtr &elf_range);
 
 	/// Register a map with this file
 	void add_map(const MapPtr &map);
@@ -395,6 +402,8 @@ namespace Exmap
 	std::string cmdline();
 	/// The list of files the process maps
 	std::list<FilePtr> files();
+	/// List of all maps which refer to this process (over all files)
+	std::list<MapPtr> maps();
 	/// The sizes over all the process maps
 	SizesPtr sizes();
 	/// The sizes over all the maps associated with a given file
@@ -510,10 +519,6 @@ namespace Exmap
 	    bool calc_maps(std::list<MapPtr> &maps);
 	private:
 
-	    /// Calculate offset from segment virtual addresses to vma addrs
-	    Elf::Address get_seg_to_mem(const Elf::SegmentPtr &seg,
-		    const VmaPtr &vma);
-
 	    bool calc_maps_for_file(const std::string &fname);
 	    bool calc_maps_for_elf_file(const std::string &fname,
 		    const FilePtr &file);
@@ -525,6 +530,7 @@ namespace Exmap
 	    bool add_holes();
 	    bool sanity_check(const std::list<MapPtr> &maps);
 	    void walk_vma_files();
+	    std::string dump_maps_to_string(const std::list<MapPtr> &maps);
 	    std::map<std::string, std::list<Exmap::VmaPtr> > _fname_to_vmas;
 
 	    std::list<VmaPtr> _vmas;

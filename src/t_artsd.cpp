@@ -15,7 +15,7 @@ public:
 	std::list<std::string> vma_lines;
     };
     ~TestSysInfo();
-    std::list<pid_t> TestSysInfo::accessible_pids();
+    std::list<pid_t> accessible_pids();
     bool sanity_check();
     bool read_page_info(pid_t pid,
 			    std::map<Elf::Address, std::list<Exmap::Page> >&pi);
@@ -137,7 +137,7 @@ map<pid_t, struct TestSysInfo::pidinfo> ArtsdTest::info;
 
 bool ArtsdTest::setup()
 {
-    plan(13);
+    plan(16);
 
     struct TestSysInfo::pidinfo pi;
 
@@ -163,6 +163,14 @@ bool ArtsdTest::setup()
     pi.vma_lines.push_back("00642000-00644000 rwxp 00125000 fd:00 714627     fc4-libc-2.3.5.so");
     pi.vma_lines.push_back("00644000-00646000 rwxp 00644000 00:00 0");
     info[1236] = pi;
+
+    pi.cmdline = "./prelinked-amule";
+    pi.vma_lines.clear();
+    pi.vma_lines.push_back("08047000-08541000 r-xp 00000000 03:41 483273     ./prelinked-amule");
+    pi.vma_lines.push_back("08541000-08551000 rwxp 004f9000 03:41 483273     ./prelinked-amule");
+    pi.vma_lines.push_back("08551000-0873f000 rwxp 08551000 00:00 0 ");
+    pi.vma_lines.push_back("08745000-087a7000 rwxp 00508000 03:41 483273     ./prelinked-amule");
+    info[1237] = pi;
 
     return true;
 }

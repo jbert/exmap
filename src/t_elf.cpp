@@ -23,6 +23,7 @@ private:
     {
 	unsigned long type;
 	bool is_exe;
+	std::string func_symbol;
     };
     struct section_info
     {
@@ -30,6 +31,7 @@ private:
 	unsigned long size;
     };
     std::list<struct section_info> read_section_info(const std::string &fname);
+    int read_number_of_symbols(const std::string &fname);
     std::map<std::string, struct testdat> _testdat;
 };
 
@@ -43,7 +45,7 @@ bool ElfTest::run()
 
 bool ElfTest::maintests()
 {
-    plan(107);
+    plan(114);
 
     Elf::File e;
 
@@ -146,46 +148,39 @@ bool ElfTest::maintests()
 	    ok(all_sections_match, "section names and order match readelf");
 	}
 
-	int readelf_num_symbols = 0;
-	ok(jutil::read_proc_output("readelf -s " + fname, lines),
-	   "can readelf symbol info from " + fname);
-	re.compile("^Symbol table '.symtab' contains (\\d+) entries");
-	re.grep(lines);
-	if (!lines.empty()) {
-	    is((int) lines.size(), 1, "readelf has .symtab line and only one");
-	    re.match_capture(lines.front(), captures);
-	    is((int) captures.size(), 1, "got my one capture");
-	    readelf_num_symbols = atoi(captures.front().c_str());
-	}
-	
+	int readelf_num_symbols = read_number_of_symbols(fname);
+	ok(readelf_num_symbols > 0, "could get number of symbols");
 	list<Elf::SymbolPtr> syms;
 	syms = e.all_symbols();
 	is(readelf_num_symbols, (int) syms.size(), "correct number of symbols");
 
 	if (td->type == ET_EXEC && readelf_num_symbols > 0) {
 
-	    Elf::SymbolPtr mainsym = e.symbol("main");
-	    ok(mainsym, "can find main symbol in exe");
-	    is(mainsym->name(), string("main"), "symbol has correct name");
-	    ok(mainsym->size() > 0, "main has non-zero size");
-	    ok(mainsym->is_func(), "main symbol is a function");
+	    string fsym = td->func_symbol;
+	    if (!fsym.empty()) {
+		Elf::SymbolPtr funcsym = e.symbol(fsym);
+		ok(funcsym, "can find " + fsym + " symbol in exe");
+		is(funcsym->name(), fsym, "symbol has correct name");
+		ok(funcsym->size() > 0, fsym + " has non-zero size");
+		ok(funcsym->is_func(), fsym + " symbol is a function");
 
-	    syms = e.symbols_in_section(e.section(".text"));
-	    list<Elf::SymbolPtr>::iterator sym_it;
-	    for (sym_it = syms.begin(); sym_it != syms.end(); ++sym_it) {
-		if ((*sym_it)->name() == "main") {
-		    break;
+		syms = e.symbols_in_section(e.section(".text"));
+		list<Elf::SymbolPtr>::iterator sym_it;
+		for (sym_it = syms.begin(); sym_it != syms.end(); ++sym_it) {
+		    if ((*sym_it)->name() == fsym) {
+			break;
+		    }
 		}
-	    }
-	    ok(sym_it != syms.end(), "found main in text section");
+		ok(sym_it != syms.end(), "found " + fsym + " in text section");
 
-	    syms = e.symbols_in_section(e.section(".data"));
-	    for (sym_it = syms.begin(); sym_it != syms.end(); ++sym_it) {
-		if ((*sym_it)->name() == "main") {
-		    break;
+		syms = e.symbols_in_section(e.section(".data"));
+		for (sym_it = syms.begin(); sym_it != syms.end(); ++sym_it) {
+		    if ((*sym_it)->name() == fsym) {
+			break;
+		    }
 		}
+		ok(sym_it == syms.end(), "didn't find " + fsym + " in data section");
 	    }
-	    ok(sym_it == syms.end(), "didn't find main in text section");
 	}
     }
 
@@ -215,14 +210,17 @@ bool ElfTest::setup()
 
     td.type = ET_EXEC;
     td.is_exe = true;
+    td.func_symbol = "";
     _testdat["/bin/ls"] = td;
     
     td.type = ET_DYN;
     td.is_exe = false;
+    td.func_symbol = "gzopen";
     _testdat["/usr/lib/libz.so"] = td;
 
     td.type = ET_EXEC;
     td.is_exe = true;
+    td.func_symbol = "main";
     _testdat["./t_elf"] = td;
     return true;
 }
@@ -297,3 +295,33 @@ ElfTest::read_section_info(const string &fname)
     return retval;
 }
 
+int ElfTest::read_number_of_symbols(const string &fname)
+{
+    list<string> captures, orig_lines;
+    list<string> symtabs;
+
+    ok(jutil::read_proc_output("readelf -s " + fname, orig_lines),
+       "can readelf symbol info from " + fname);
+
+    symtabs.push_back(".symtab");
+    symtabs.push_back(".dynsym");
+    list<string>::iterator it;
+
+    for (it = symtabs.begin(); it != symtabs.end(); ++it) {
+	Regexp re;
+	string &symtab = *it;
+	re.compile("^Symbol table '" + symtab + "' contains (\\d+) entries");
+	list<string> lines(orig_lines);
+	re.grep(lines);
+	if (!lines.empty()) {
+	    is((int) lines.size(), 1,
+	       "readelf has exactly one " + symtab + " table");
+	    re.match_capture(lines.front(), captures);
+	    is((int) captures.size(), 1, "got my one capture");
+	    // Take first match, i.e. prefer symtab to dynsym
+	    return atoi(captures.front().c_str());
+	}
+    }
+
+    return 0;
+}
