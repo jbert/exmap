@@ -1,6 +1,6 @@
-extern int do_shared_array_work(void);
+#include <sys/user.h> /* For PAGE_SIZE */
 
-#define PAGE_SIZE (4096)
+extern int do_shared_array_work(void);
 
 /* We'd like the arrays big enough that the page granularity doesn't
  * skew the figures */

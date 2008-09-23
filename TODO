@@ -1,7 +1,7 @@
 For 0.8.1
 =========
 
-- (re-)test on FC4
+DONE - (re-)test on FC4
 
 DONE - fix FC4 bug
 	DONE - after adding test case
@@ -104,9 +104,6 @@ and do it in the caller).
 - if we do 'reload', functionality then will need to explicitly break
 proc <-> file <-> vma links since the shared_ptr's are refcounting
 won't. (use weak_ptr)
-
-- put together some test data
-	- have a friend class to Snapshot insert some mock objects?
 
 - try and factor out common code between filetab and proctab
 

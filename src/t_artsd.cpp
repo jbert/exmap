@@ -151,9 +151,9 @@ bool ArtsdTest::setup()
 
     pi.cmdline = "./libnss";
     pi.vma_lines.clear();
-    pi.vma_lines.push_back("00421000-0042a000 r-xp 00000000 08:11 7089877    ./fedora-libnss_files-2.3.5.so");
-    pi.vma_lines.push_back("0042a000-0042b000 r-xp 00008000 08:11 7089877    ./fedora-libnss_files-2.3.5.so");
-    pi.vma_lines.push_back("0042b000-0042c000 rwxp 00009000 08:11 7089877    ./fedora-libnss_files-2.3.5.so");
+    pi.vma_lines.push_back("00421000-0042a000 r-xp 00000000 08:11 7089877    ./fc4-libnss_files-2.3.5.so");
+    pi.vma_lines.push_back("0042a000-0042b000 r-xp 00008000 08:11 7089877    ./fc4-libnss_files-2.3.5.so");
+    pi.vma_lines.push_back("0042b000-0042c000 rwxp 00009000 08:11 7089877    ./fc4-libnss_files-2.3.5.so");
     info[1235] = pi;
 
     pi.cmdline = "./fc4-libc-2.3.5.so";

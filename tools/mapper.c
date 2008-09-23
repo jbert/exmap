@@ -6,6 +6,7 @@
 #include <sys/fcntl.h> /* For open flags */
 #include <unistd.h> /* For getopt */
 #include <stdio.h>
+#include <sys/user.h> /* For PAGE_SIZE */
 
 enum MapType {
      PRIVATE,
@@ -160,7 +161,6 @@ static void wait_for_all_children(void)
 int main(int argc, char **argv)
 {
      char *fname = NULL;
-     const int PAGE_SIZE = 4096;
      int num_pages = 100, num_children = 5, sleep_secs = 60;
      enum WorkType wt = READ;
      enum MapType mt = SHARED;
