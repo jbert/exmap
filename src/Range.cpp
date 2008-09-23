@@ -33,7 +33,7 @@ bool Range::operator==(const Range &r) const
     return _start == r._start && _end == r._end;
 }
 
-bool Range::operator<(const Range &other) const
+bool Range::operator<(const Range &other)
 {
     return _start < other._start;
 }
@@ -43,6 +43,17 @@ bool Range::operator<(const Range &other) const
 void Range::print(std::ostream &os) const
 {
     os << to_string();
+}
+
+std::ostream &operator<<(std::ostream &os, const Range &r)
+{
+    r.print(os);
+    return os;
+}
+std::ostream &operator<<(std::ostream &os, const RangePtr &r)
+{
+    r->print(os);
+    return os;
 }
 
 RangePtr Range::add(unsigned long v) const
@@ -58,12 +69,6 @@ RangePtr Range::subtract(unsigned long v) const
 bool Range::contains(unsigned long v) const
 {
     return _start <= v && v < _end;
-}
-
-bool Range::contains(const RangePtr &r) const
-{
-    if (!r) { return false; }
-    return contains(*r);
 }
 
 bool Range::contains(const Range &r) const
@@ -156,7 +161,7 @@ list<RangePtr> Range::merge_list(const list<RangePtr> &arg)
 
 list<RangePtr> Range::invert_list(const list<RangePtr> &arg)
 {
-    list<RangePtr> l = restrict(arg);
+    list<RangePtr> l = merge_list(arg);
     list<RangePtr> result;
 
     unsigned long val = _start;
@@ -171,24 +176,6 @@ list<RangePtr> Range::invert_list(const list<RangePtr> &arg)
     if (val < _end) {
 	result.push_back(RangePtr(new Range(val, _end)));
     }
-    return result;
-}
-
-list<RangePtr> Range::restrict(const list<RangePtr> &arg)
-{
-    list<RangePtr> result;
-    list<RangePtr> l = merge_list(arg);
-    list<RangePtr>::iterator it;
-    for (it = l.begin(); it != l.end(); ++it) {
-	RangePtr subr = (*it)->truncate_below(_start);
-	if (subr && subr->size() > 0) {
-	    subr = subr->truncate_above(_end);
-	}
-	if (subr && subr->size() > 0) {
-	    result.push_back(subr);
-	}
-    }
-
     return result;
 }
 
@@ -213,15 +200,4 @@ bool Range::any_overlap(const list<RangePtr> &arg)
     }
 
     return false;
-}
-
-ostream &operator<<(ostream &os, const Range &r)
-{
-    r.print(os);
-    return os;
-}
-ostream &operator<<(ostream &os, const RangePtr &r)
-{
-    r->print(os);
-    return os;
 }

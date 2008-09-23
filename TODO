@@ -1,22 +1,11 @@
 For 0.8.1
 =========
 
-DONE - (re-)test on FC4
-
-DONE - fix FC4 bug
-	DONE - after adding test case
-
-- add coverage testing support to makefile
-	- better Exmap coverage
-	- 	mkdir -p ./coverage
-	lcov --directory $STAP_OBJ --zerocounters
-	runtest --tool=systemtap
-	lcov --directory $STAP_OBJ --capture --output-file ./coverage/stap.info
-	genhtml -o ./coverage ./coverage/stap.info
-
 NO - make 'prefix' part of jutil stream
 	- and make an RAII-like object to set and clear it per func
 	    - defaults to setting/unsetting both warn and debug
+
+- test on FC4
 
 DONE - make jutil streams run-time enable-able
   - so can turn on debug
@@ -104,6 +93,9 @@ and do it in the caller).
 - if we do 'reload', functionality then will need to explicitly break
 proc <-> file <-> vma links since the shared_ptr's are refcounting
 won't. (use weak_ptr)
+
+- put together some test data
+	- have a friend class to Snapshot insert some mock objects?
 
 - try and factor out common code between filetab and proctab
 

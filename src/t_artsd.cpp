@@ -97,10 +97,18 @@ bool TestSysInfo::read_page_info(pid_t pid,
 	Elf::Address vma_start = (*vma_it)->start();
 	Elf::Address vma_end = (*vma_it)->end();
 	for (addr = vma_start; addr < vma_end; addr += Elf::PAGE_SIZE) {
+	    sstr.str("");
+
 	    bool resident, writable;
 	    PageCookie cookie;
 	    random_page_info(&resident, &writable, &cookie);
-	    Page p(cookie, resident, writable);
+
+	    sstr << resident << " "
+		 << writable << " "
+		 << cookie << "\n";
+	    Page p;
+	    p.parse_line(sstr.str());
+
 	    pi[vma_start].push_back(p);
 	}
     }
@@ -137,33 +145,16 @@ map<pid_t, struct TestSysInfo::pidinfo> ArtsdTest::info;
 
 bool ArtsdTest::setup()
 {
-    plan(13);
+    plan(2);
 
     struct TestSysInfo::pidinfo pi;
-
-    pi.cmdline = "./artsd";
-    pi.vma_lines.clear();
-    pi.vma_lines.push_back("08047000-08070000 r-xp 00000000 16:0a 29616899   ./munged-ls-threeloads");
-    pi.vma_lines.push_back("08070000-08074000 rw-p 00028000 16:0a 29616899   ./munged-ls-threeloads");
-    pi.vma_lines.push_back("08076000-080bf000 rw-p 0002b000 16:0a 29616899   ./munged-ls-threeloads");
-    pi.vma_lines.push_back("080bf000-081b7000 rw-p 080bf000 00:00 0          [heap]");
+    pi.cmdline = "./foo";
     info[1234] = pi;
 
-    pi.cmdline = "./libnss";
-    pi.vma_lines.clear();
-    pi.vma_lines.push_back("00421000-0042a000 r-xp 00000000 08:11 7089877    ./fc4-libnss_files-2.3.5.so");
-    pi.vma_lines.push_back("0042a000-0042b000 r-xp 00008000 08:11 7089877    ./fc4-libnss_files-2.3.5.so");
-    pi.vma_lines.push_back("0042b000-0042c000 rwxp 00009000 08:11 7089877    ./fc4-libnss_files-2.3.5.so");
-    info[1235] = pi;
-
-    pi.cmdline = "./fc4-libc-2.3.5.so";
-    pi.vma_lines.clear();
-    pi.vma_lines.push_back("0051d000-00640000 r-xp 00000000 fd:00 714627     fc4-libc-2.3.5.so");
-    pi.vma_lines.push_back("00640000-00642000 r-xp 00123000 fd:00 714627     fc4-libc-2.3.5.so");
-    pi.vma_lines.push_back("00642000-00644000 rwxp 00125000 fd:00 714627     fc4-libc-2.3.5.so");
-    pi.vma_lines.push_back("00644000-00646000 rwxp 00644000 00:00 0");
-    info[1236] = pi;
-
+    info[1234].vma_lines.push_back("08047000-08070000 r-xp 00000000 16:0a 29616899   ./munged-ls-threeloads");
+    info[1234].vma_lines.push_back("08070000-08074000 rw-p 00028000 16:0a 29616899   ./munged-ls-threeloads");
+    info[1234].vma_lines.push_back("08076000-080bf000 rw-p 0002b000 16:0a 29616899   ./munged-ls-threeloads");
+    info[1234].vma_lines.push_back("080bf000-081b7000 rw-p 080bf000 00:00 0          [heap]");
     return true;
 }
 
@@ -177,30 +168,7 @@ bool ArtsdTest::run()
 
     ok(snap.load(), "can load test");
     
-    is(snap.num_procs(), (int)info.size(),
-	    "check we've loaded the right number of procs");
-
-    list<pid_t> testpids = tsi->accessible_pids();
-    list<pid_t> pids = snap.pids();
-    testpids.sort();
-    pids.sort();
-    is(testpids, pids, "right pid list");
-
-    ProcessPtr proc;
-    proc = snap.proc(-1);
-    notok(proc, "no process for pid -1");
-
-    map<pid_t, struct TestSysInfo::pidinfo>::iterator it;
-    for (it = info.begin(); it != info.end(); ++it) {
-	pid_t pid = it->first;
-	proc = snap.proc(pid);
-	ok(proc, "can find proc for pid");
-	is(proc->cmdline(), it->second.cmdline, "correct cmdline for proc");
-
-	SizesPtr sizes = proc->sizes();
-	ok(sizes != 0, "can get some sizes");
-    }
-
+    is(snap.num_procs(), 1, "check we've loaded the right number of procs");
     return true;
 }
 

@@ -1,9 +1,8 @@
 /*
  * (c) John Berthels 2005 <jjberthels@gmail.com>. See COPYING for license.
  */
-#include "Range.hpp"
-#include <jutil.hpp>
 #include <Trun.hpp>
+#include "Range.hpp"
 
 #include <sstream>
 #include <list>
@@ -14,12 +13,13 @@ public:
     bool run();
 };
 
+
 using namespace std;
-using namespace jutil;
+
 
 bool RangeTest::run()
 {
-    plan(133);
+    plan(111);
 
     Range r1(3, 3);
     is(r1.start(), 3UL, "check start");
@@ -112,17 +112,6 @@ bool RangeTest::run()
     RangePtr r3 = Range(3, 7).truncate_below(7);
     ok(*r3 == Range(7, 7), "truncate_below at the end");
 
-    r2.truncate_above(4);
-    ok(r2 == Range(2, 6), "truncate_above doesn't change range");
-    ok(*(r2.truncate_above(1)) == Range(1, 1),
-       "truncate_above below the range");
-    ok(*(r2.truncate_above(2)) == Range(2, 2),
-       "truncate_above at the start");
-    ok(*(r2.truncate_above(4)) == Range(2, 4),
-       "truncate_above in the middle");
-    ok(*(r2.truncate_above(8)) == Range(2, 6),
-       "truncate_above above the end");
-
     Range t = r2;
     ok(t.size() > 0, "Can create a copy");
     is(t.start(), r2.start(), "have same start");
@@ -136,6 +125,7 @@ bool RangeTest::run()
     sstr << r3;
     ok(!sstr.str().empty(), "can write a rangeptr to an ostream");
 
+
     RangePtr lr0 = RangePtr(new Range(1, 2));
     RangePtr lr1 = RangePtr(new Range(3, 5));
     RangePtr lr2 = RangePtr(new Range(5, 7));
@@ -145,7 +135,6 @@ bool RangeTest::run()
     
     ok(lr1->merge(*lr2), "Can merge adjacent");
     ok(*(lr1->merge(*lr2)) == Range(3, 7), "Can merge adjacent 2");
-    ok(*(lr2->merge(*lr1)) == Range(3, 7), "Can merge adjacent 3");
     
     RangePtr merge_result = Range(1, 2).merge(Range(1, 2));
     ok(merge_result, "self merge succeeds");
@@ -255,16 +244,7 @@ bool RangeTest::run()
     is((int) rl.size(), 1, "Right number of inverted elements");
     ok(*(rl.front()) == Range(2, 3), "inverted ok");
 
-    l.clear();
-    l.push_back(RangePtr(new Range(1, 2)));
-    l.push_back(RangePtr(new Range(3, 5)));
-    l.push_back(RangePtr(new Range(5, 7)));
-    l.push_back(RangePtr(new Range(10, 15)));
-    l.push_back(RangePtr(new Range(20, 30)));
-    rl = Range(6, 8).invert_list(l);
-    is((int) rl.size(), 1, "restricted invert 1");
-    is(*rl.front(), Range(7, 8), "restricted invert 2");
-
+    
     // ------------------------------------------------------------
     // any_overlap
 
@@ -284,45 +264,7 @@ bool RangeTest::run()
     l.pop_back();
     l.push_back(RangePtr(new Range(6, 8)));
     ok(Range::any_overlap(l), "overlap4");
-
-    // Restrict a list to a containing range
-    l.clear();
-    l.push_back(RangePtr(new Range(2, 3)));
-    l.push_back(RangePtr(new Range(4, 6)));
-    l.push_back(RangePtr(new Range(6, 8)));
-    list<RangePtr> rest_list = Range(0, 1).restrict(l);
-    ok(rest_list.empty(), "restrict 1");
-    rest_list = Range(1, 2).restrict(l);
-    ok(rest_list.empty(), "restrict 1a");
-
-    rest_list = Range(1, 3).restrict(l);
-    is((int) rest_list.size(), 1, "restrict 2");
-    is(*rest_list.front(), Range(2, 3), "restrict 3");
-
-    rest_list = Range(0, 10).restrict(l);
-    is(rest_list, Range::merge_list(l), "restrict 4");
     
-    rest_list = Range(6, 10).restrict(l);
-    is((int) rest_list.size(), 1, "restrict 5");
-    is(*rest_list.front(), Range(6, 8), "restrict 6");
-
-    rest_list = Range(5, 10).restrict(l);
-    is((int) rest_list.size(), 1, "restrict 7");
-    is(*rest_list.front(), Range(5, 8), "restrict 8");
-
-    rest_list = Range(1, 5).restrict(l);
-    is((int) rest_list.size(), 2, "restrict 9");
-    is(*rest_list.front(), Range(2, 3), "restrict 10");
-    is(*rest_list.back(), Range(4, 5), "restrict 11");
-
-    l.clear();
-    l.push_back(RangePtr(new Range(6, 8)));
-    l.push_back(RangePtr(new Range(2, 3)));
-    l.push_back(RangePtr(new Range(4, 6)));
-    l.sort();
-    is(*l.front(), Range(2, 3), "sorted pointer list 1");
-    is(*l.back(), Range(6, 8), "sorted pointer list 2");
-
     return true;
 }
 

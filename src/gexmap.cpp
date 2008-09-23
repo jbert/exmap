@@ -220,10 +220,10 @@ namespace Gexmap
     };
     
     /// The main, toplevel window
-    class TopWin : public Gtk::Window
+    class Top : public Gtk::Window
     {
     public:
-	TopWin(Exmap::SnapshotPtr &snapshot);
+	Top(Exmap::SnapshotPtr &snapshot);
 	static const int WIDTH = 800;
 	static const int HEIGHT = 600;
     private:
@@ -246,7 +246,7 @@ using namespace Gexmap;
 
 // ------------------------------------------------------------
 
-TopWin::TopWin(SnapshotPtr &snapshot)
+Top::Top(SnapshotPtr &snapshot)
     : _snapshot(snapshot)
 {
     add(_vbox);
@@ -714,7 +714,7 @@ ExmapTab::ExmapTab()
     _bottom_half.add1(_sectionlist);
     _bottom_half.add2(_symlist);
 
-    int height = TopWin::HEIGHT;
+    int height = Top::HEIGHT;
     set_position(2 * height / 3);
     _top_half.set_position(height / 3);
     _bottom_half.set_position(height / 6);
@@ -864,10 +864,10 @@ int main(int argc, char *argv[])
 	return -1;
     }
 
-    TopWin topwin(snapshot);
+    Top top(snapshot);
     
     if (argc == 1) {
-	Gtk::Main::run(topwin);
+	Gtk::Main::run(top);
     }
 
     return 0;
