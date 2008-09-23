@@ -105,13 +105,6 @@ sub procs { return @{$_[0]->{_procs}}; }
 sub page_pool { return $_[0]->{_page_pool}; }
 sub file_pool { return $_[0]->{_file_pool}; }
 sub files { return $_[0]->file_pool->files; }
-sub elf_files { return grep { $_->is_elf } $_[0]->files; }
-
-sub total_pages
-{
-    my $s = shift;
-    return scalar values %{$s->{_addr_to_page}};
-}
 
 sub pids
 {
@@ -189,7 +182,7 @@ sub _load_procs
 	    warn("Can't load info for pid $pid");
 	    next;
 	}
-	push @procs, $proc;
+	push @procs, $proc if $proc->has_mm;
     }
     
     $s->{_procs} = \@procs;
@@ -275,8 +268,15 @@ sub load
     my $page_pool = shift;
     my $test_exmap_file = shift; # Or undef for the real exmap
     
-    $s->_load_vmas($page_pool) or return undef;
-    $s->_load_page_info($test_exmap_file) or return undef;
+    unless ($s->_load_vmas($page_pool)) {
+	warn "Can't load vmas for " . $s->pid;
+	return undef;
+    }
+    return 1 unless $s->has_mm;
+    unless ($s->_load_page_info($test_exmap_file)) {
+	warn "Can't load page info for " . $s->pid;
+	return undef;
+    }
     return 1;
 }
 
@@ -284,16 +284,21 @@ sub pid { return $_[0]->{_pid}; }
 sub exe_name { return $_[0]->{_exe_name}; }
 sub cmdline { return $_[0]->{_cmdline}; }
 sub _vmas { return @{$_[0]->{_vmas}}; }
+sub has_mm
+{
+    my $s = shift;
+    return exists $s->{_vmas} && scalar $s->{_vmas} > 0;
+}
 sub maps { return @{$_[0]->{_maps}}; }
 sub files { return values %{$_[0]->{_files}}; }
 
-sub _find_vma_by_hex_addr
+sub _find_vma_by_addr
 {
     my $s = shift;
-    my $hex_addr = shift;
+    my $addr = shift;
 
     foreach my $vma ($s->_vmas) {
-	return $vma if $vma->{info}->{hex_start} eq $hex_addr;
+	return $vma if $vma->{info}->{start} == $addr;
     }
     return undef;
 }
@@ -386,33 +391,51 @@ sub sizes
 {
     my $s = shift;
     my $file = shift;
-    my $elf_range = shift;
 
     my @maps = $s->maps;
     warn ("No maps in process", $s->pid) unless @maps;
+
     if ($file) {
 	@maps = $s->_restrict_maps_to_file($file, @maps);
 	warn ("No maps for file " . $file->name . " in process ", $s->pid)
 	    unless @maps;
     }
 
-    # A list of { map => $map, range => $mem_range }. Undef range implies
-    # full map.
-    my @refinements = map { { map => $_,
-				  range => undef } } @maps;
-
-    # elf_range is only meaningful if restricting to a single file
-    if ($file && $elf_range) {
-#	return 0 if ($elf_range->size == 0);
-	@refinements = $s->_refine_maps_to_elf_range($elf_range, @maps);
-    }
     my $sizes = Exmap::Sizes->new;
-    foreach my $r (@refinements) {
-	my $subsizes = $r->{map}->sizes_for_mem_range($r->{range});
+    foreach my $m (@maps) {
+	my $subsizes = $m->sizes_for_mem_range;
 	$sizes->add($subsizes);
     }
 
     return $sizes;
+}
+
+sub elf_range_sizes
+{
+    my $s = shift;
+    my $file = shift;
+    my @elf_ranges = @_;
+
+    my @maps = $s->maps;
+    warn ("No maps in process", $s->pid) unless @maps;
+    @maps = $s->_restrict_maps_to_file($file, @maps);
+    warn ("No maps for file " . $file->name . " in process ", $s->pid)
+	unless @maps;
+
+    my @sizes;
+    foreach my $elf_range (@elf_ranges) {
+	# A list of { map => $map, range => $mem_range }. Undef range
+	# implies full map.
+	my @refinements = $s->_refine_maps_to_elf_range($elf_range, @maps);
+	my $sizes = Exmap::Sizes->new;
+	foreach my $r (@refinements) {
+	    my $subsizes = $r->{map}->sizes_for_mem_range($r->{range});
+	    $sizes->add($subsizes);
+	}
+	push @sizes, $sizes;
+    }
+
+    return @sizes;
 }
 
 sub _load_vmas
@@ -428,13 +451,9 @@ sub _load_vmas
     }
     my @map_lines = <M>;
     close M;
-    unless (@map_lines > 0) {
-	# Don't warn. If we run as root we'll pick up a lot of these,
-	# basically kernel threads without an mm_struct (empty
-	# /proc/x/maps).
-	#	warn("read zero maplines for ", $s->pid);
-	return undef;
-    }
+
+    # Kernel threads have no maps. Thats OK.
+    return 1 if (@map_lines == 0);
 
     my @vmas;
     foreach my $line (@map_lines) {
@@ -488,7 +507,8 @@ sub _load_page_info
 	if ($line =~ /^VMA/) {
 	    # New VMA
 	    my ($vma_hex_start, $npages) = $line =~ /^VMA\s+0x(\S+)\s+(\d+)$/;
-	    my $vma = $s->_find_vma_by_hex_addr($vma_hex_start);
+	    my $vma_start = hex $vma_hex_start;
+	    my $vma = $s->_find_vma_by_addr($vma_start);
 	    unless ($vma) {
 		# TODO - try reload completely here?
 		warn("PID ", $s->pid, " can't find VMA $vma_hex_start");
@@ -497,9 +517,8 @@ sub _load_page_info
 	    $current_vma = $vma;
 	}
 	else {
-	    ($pfn, $swap_entry) = split(/\s+/, $line);
-	    my $page = Exmap::Page->new($pfn, $swap_entry);
-	    $current_vma->add_page($page);
+	    my $page_cookie = Exmap::Page::line_to_cookie($line);
+	    $current_vma->add_page($page_cookie);
 	}
     }
     close E;
@@ -678,14 +697,12 @@ sub _calculate_info
 sub add_page
 {
     my $s = shift;
-    my $page = shift;
+    my $page_cookie = shift;
 
     # Record all pages, in order
-    push @{$s->{_pages}}, $page;
+    push @{$s->{_pages}}, $page_cookie;
 
-    $s->{_page_pool}->{$page->cookie}++;
-
-    return 1;
+    $s->{_page_pool}->{$page_cookie}++;
 }
 
 sub is_vdso { return $_[0]->{info}->{file} eq VDSO_NAME; }
@@ -734,46 +751,46 @@ sub get_pages_for_range
     return undef unless defined $end_pgnum;
 
     if ($start_pgnum == $end_pgnum) {
-	my $page = $s->{_pages}->[$start_pgnum];
-	unless (defined $page) {
+	my $page_cookie = $s->{_pages}->[$start_pgnum];
+	unless (defined $page_cookie) {
 	    warn("Can't find page for pgnum $start_pgnum in $vma_fname");
 	    return undef;
 	}
 	return [{
-		 page => $page,
+		 page => $page_cookie,
 		 bytes => $range->size,
 		}];
     }
 
 
     my @info;
-    my $page;
+    my $page_cookie;
     
-    $page = $s->{_pages}->[$start_pgnum];
-    unless (defined $page) {
+    $page_cookie = $s->{_pages}->[$start_pgnum];
+    unless (defined $page_cookie) {
 	warn("Can't find page for pgnum $start_pgnum in $vma_fname");
 	return undef;
     }
-    push @info, { page => $page,
+    push @info, { page => $page_cookie,
 		  bytes => Elf::PAGE_SIZE
 		  - ($range->start - Elf::page_align_down($range->start))};
     
-    $page = $s->{_pages}->[$end_pgnum];
-    unless (defined $page) {
+    $page_cookie = $s->{_pages}->[$end_pgnum];
+    unless (defined $page_cookie) {
 	warn("Can't find page for pgnum $end_pgnum in $vma_fname");
 	return undef;
     }
-    push @info, { page => $page,
+    push @info, { page => $page_cookie,
 		  bytes =>
 		  $range->end - Elf::page_align_down($range->end - 1) };
 
     for (my $pgnum = $start_pgnum+1; $pgnum <= $end_pgnum-1; ++$pgnum) {
-	$page = $s->{_pages}->[$pgnum];
-	unless (defined $page) {
+	$page_cookie = $s->{_pages}->[$pgnum];
+	unless (defined $page_cookie) {
 	    warn("Can't find page for pgnum $pgnum in $vma_fname");
 	    return undef;
 	}
-	push @info, { page => $page,
+	push @info, { page => $page_cookie,
 		      bytes => Elf::PAGE_SIZE };
     }
 
@@ -1017,21 +1034,28 @@ sub sizes_for_mem_range
     my $infolist = $s->_vma->get_pages_for_range($subrange);
     my $pagepool = $s->_vma->page_pool;
     
-    $sizes->{vm_size} = $subrange->size;
+    $sizes->{vm} = $subrange->size;
 
+    my $page_cookie;
+    my $count;
     foreach my $info (@$infolist) {
-	my $count = $pagepool->{$info->{page}->cookie};
-	die ("Zero count in pagepool for $info->{page}") unless $count >0;
+	$page_cookie = $info->{page};
+	$count = $pagepool->{$page_cookie};
+	die ("Zero count in pagepool for $page_cookie") unless $count > 0;
 
-	if ($info->{page}->is_mapped) {
-	    $sizes->{eff_mapped_size} += $info->{bytes} / $count;
-	    $sizes->{mapped_size} += $info->{bytes};
-	    $sizes->{sole_mapped_size} += $info->{bytes}
+	if (Exmap::Page::is_mapped($page_cookie)) {
+	    $sizes->{eff_mapped} += $info->{bytes} / $count;
+	    $sizes->{mapped} += $info->{bytes};
+	    $sizes->{sole_mapped} += $info->{bytes}
 		if ($count == 1);
-	}
-	if ($info->{page}->is_resident) {
-	    $sizes->{eff_resident_size} += $info->{bytes} / $count;
-	    $sizes->{resident_size} += $info->{bytes};
+
+	    if (Exmap::Page::is_resident($page_cookie)) {
+		$sizes->{eff_resident} += $info->{bytes} / $count;
+		$sizes->{resident} += $info->{bytes};
+		if (Exmap::Page::is_writable($page_cookie)) {
+		    $sizes->{writable} += $info->{bytes};
+		}
+	    }
 	}
     }
 
@@ -1052,65 +1076,30 @@ sub to_string
 # ------------------------------------------------------------
 package Exmap::Page;
 
-# We identify a unique page by a combination of 'pfn' and 'swap_entry',
-# i.e. these are combined to form a unique per-page cookie.
+# We encode the info in the page cookie directly, to reduce storage.
+# We could use a blessed scalar ref as an object, but that would be
+# two scalars per page cookie, so we use static methods instead.
 
-# Pages can be in the following states:
-# Resident (has a non-zero pfn)
-# Swapped (has a zero pfn and a non-zero swap_entry)
-# Unmapped (has a zero pfn and an zero swap_entry)
-#
-
-# We use a scalar ref as the object to save memory.
-
-sub new
+sub line_to_cookie
 {
-    my $c = shift;
-    $c = ref $c if ref $c;
+    my $line = shift;
+    my ($resident, $writable, $cookie) = split(/\s+/, $line);
 
-    my $pfn = shift;
-    my $swap_entry = shift;
-
-    # We store a lot of these, so trim down the string lengths
-    $pfn =~ s/^0x//;
-    $swap_entry =~ s/^0x//;
-    # OK, this maps the common (32-bit) 0x00000000 -> 0x0, but is also
-    # safe for runs of zeros in 64-bit addresss, since even if they
-    # get mapped down, we only ever compare for cookie equality, not
-    # ordering.
-    $pfn =~ s/00000000/0/g;
-    $swap_entry =~ s/00000000/0/g;
-
-    my $self = $pfn . 'X' . $swap_entry;
-    my $s = \$self;
-    bless $s, $c;
-
-    die('Page has valid pfn and swap_entry')
-	if ($s->is_resident && $s->is_swapped);
-
-    return $s;
+    $cookie = hex $cookie;
+    $cookie <<= 2; # Make room for flag bits
+    $cookie += $resident ? 2 : 0;
+    $cookie += $writable ? 1 : 0;
+    return $cookie;
 }
 
-# The cookie is the scalar referenced by the object
-sub cookie
-{
-    my $s = shift;
-    return $$s;
-}
-
-sub is_resident
-{
-    my $s = shift;
-    return !($$s =~ /^0+X/);
-}
-
+sub is_resident { return $_[0] & 2; }
+sub is_writable { return $_[0] & 1; }
+sub is_mapped { return $_[0] != 0 }
 sub is_swapped
 {
-    my $s = shift;
-    return !($$s =~ /X0+$/);
+    my $cookie = shift;
+    return is_mapped($cookie) && !is_resident($cookie);
 }
-
-sub is_mapped { return $_[0]->is_resident || $_[0]->is_swapped; }
 
 # ------------------------------------------------------------
 package Exmap::Sizes;
@@ -1129,32 +1118,28 @@ sub new
 }
 
 my %SIZE_NAMES = (
-		  eff_mapped_size => "Eff. Mapped",
-		  eff_resident_size => "Eff. Resident",
-		  mapped_size => "Mapped",
-		  resident_size =>  "Resident",
-		  sole_mapped_size => "Sole Mapped",
-		  vm_size => "VM",
+		  eff_mapped => "Eff. Mapped",
+		  eff_resident => "Eff. Resident",
+		  mapped => "Mapped",
+		  resident =>  "Resident",
+		  sole_mapped => "Sole Mapped",
+		  vm => "VM",
+		  writable => "Writable",
 		 );
 
+my @KEYS = sort keys %SIZE_NAMES;
 sub keys
 {
     # Bit of a cheat, we want the eff_ ones first and the alphasort
     # to the front. :-/
-    return sort keys %SIZE_NAMES;
+    return @KEYS;
 }
 
 # All the svals, in the same order returned by ->keys
-sub all_svals
+sub multi_svals
 {
     my $s = shift;
-    return map { $s->sval($_) } $s->keys;
-}
-
-sub key_names
-{
-    my $s = shift;
-    return map { $s->key_name($_) } $s->keys;
+    return map { $s->sval($_) } @_;
 }
 
 sub scale_kbytes
@@ -1196,7 +1181,12 @@ sub sval
 {
     my $s = shift;
     my $key = shift;
-    my $val = $s->{$key} / $s->_scale_factor;
+    my $val = $s->{$key};
+    unless (defined $val) {
+	warn "Undefined val for key [$key]";
+	return undef;
+    }
+    $val /= $s->_scale_factor;
     $val *= 100;
     $val = int $val;
     $val /= 100;

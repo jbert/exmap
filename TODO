@@ -1,3 +1,37 @@
+- use binary exmap output for speed?
+
+- lose the 'first_cols'/sizes distinction?
+
+- document non-page-aligned values for files
+
+NO - have computable columns, based on user-specified code.
+	- add UI to control which columns are visible
+
+	- turn '::Sizes' inside out. Instead of accumulated values,
+	with the code in sizes_for_mem_range, we need a 'zero' and
+	'accumulate' method on an abstract 'Size' or 'Measure'
+	class. This object is then passed in and gets the @info poked
+	at it (or better, don't need to put together the infolist at
+	all...that list of hash refs can go. Instead page_cookie and
+	range are args to the size func (which takes flags, gets count
+	and calls the abstract func).
+
+	- Then usercode fits in nicely as a new subclass, using an
+	'eval' subref as the abstract.
+
+- have a sanity check for writable numbers
+	- can we add some unit tests?
+		- perhaps run some 'mapper' progs to get some different
+		mmap() behaviour.
+
+- config file
+	DONE - allow configuration of columns per listview
+	- allow specification of perl subs as column definitions
+	- build listviews dynamically?
+
+- command line tool, with various options on what to report (which
+measures, which items)
+
 - try and show thread stack usage
 	- maybe additional info from kernel module?
 

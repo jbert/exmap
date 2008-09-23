@@ -4,7 +4,7 @@
 #
 use strict;
 use warnings;
-use Test::More tests => 128;
+use Test::More tests => 159;
 
 use constant PAGE_SIZE => 4096;
 
@@ -70,13 +70,13 @@ is(scalar @procs, $NUM_INSTANCES, "can find all our procs");
 my $proc = $procs[0];
 my $sizes = $proc->sizes;
 ok($sizes, "can get sizes");
-ok($sizes->{vm_size} > $NUM_ARRAYS * $ARRAY_SIZE, "image is big enough");
+ok($sizes->{vm} > $NUM_ARRAYS * $ARRAY_SIZE, "image is big enough");
 my $ps_size = get_pid_size_from_ps($proc->pid);
-is($sizes->{vm_size}, $ps_size, "exmap info matches ps output");
+is($sizes->{vm}, $ps_size, "exmap info matches ps output");
 
-ok($sizes->{resident_size} > 0, "nonzero resident size");
-ok($sizes->{eff_resident_size} > 0, "nonzero effective size");
-ok($sizes->{eff_resident_size} < $sizes->{resident_size},
+ok($sizes->{resident} > 0, "nonzero resident size");
+ok($sizes->{eff_resident} > 0, "nonzero effective size");
+ok($sizes->{eff_resident} < $sizes->{resident},
    "effective is smaller than resident");
 
 my @files = $exmap->files;
@@ -98,15 +98,18 @@ foreach my $proc (@procs_for_file) {
 foreach my $proc (@procs) {
     $sizes = $proc->sizes($file);
     my $arrays_size = $NUM_ARRAYS * $ARRAY_SIZE;
-    my $delta = abs($sizes->{vm_size} - $arrays_size) / $arrays_size;
+    my $delta = abs($sizes->{vm} - $arrays_size) / $arrays_size;
     # Not exact, because there will be some function code etc.
-    ok($delta < 0.01, "Shared lib has correct size in each proc [$arrays_size != $sizes->{vm_size}]");
+    ok($delta < 0.01, "Shared lib has correct size in each proc [$arrays_size != $sizes->{vm}]");
 }
 
 my $text = $file->elf->section_by_name(".text");
 ok($text, "can find text section");
 ok($text->size > 0, "text section has nonzero size");
-is(2 * $text->size, $procs[0]->sizes($file, $text->mem_range)->{resident_size},
+my @sizes = $procs[0]->elf_range_sizes($file,
+				       $text->mem_range);
+is(scalar @sizes, 1, "one size returned for one range");
+is(2 * $text->size, $sizes[0]->{resident},
    "lib text is resident and mapped twice (!)");
 
 my $bss = $file->elf->section_by_name(".bss");
@@ -116,9 +119,11 @@ my $data = $file->elf->section_by_name(".data");
 ok($data, "can find data section");
 
 is($data->size, $bss->size, "data and bss sizes the same");
-my $delta = $procs[0]->sizes($file, $data->mem_range)->{resident_size}
-    - $procs[0]->sizes($file, $bss->mem_range)->{resident_size};
-
+@sizes = $procs[0]->elf_range_sizes($file, $data->mem_range);
+is(scalar @sizes, 1, "one size returned for one range");
+my @bss_sizes = $procs[0]->elf_range_sizes($file, $bss->mem_range);
+is(scalar @bss_sizes, 1, "one size returned for one bss range");
+my $delta = $sizes[0]->{resident} - $bss_sizes[0]->{resident};
 ok($delta <= PAGE_SIZE, "data and bss resident are within a page");
 
 
@@ -131,8 +136,9 @@ foreach my $sym (@bss_syms) {
 my $arrays_size = $ARRAY_SIZE * $resident_number_of_arrays;
 
 foreach my $proc (@procs) {
-    my $resident_size_for_file_in_proc
-	= $proc->sizes($file, $bss->mem_range)->{resident_size};
+    @sizes = $proc->elf_range_sizes($file, $bss->mem_range);
+    is(scalar @sizes, 1, "one size returned for one range");
+    my $resident_size_for_file_in_proc = $sizes[0]->{resident};
     is($resident_size_for_file_in_proc, $arrays_size,
        "correct resident size in bss")
 }
@@ -142,8 +148,11 @@ foreach my $sym_name (keys %SA_SYMBOLS) {
     my $sym = $file->elf->symbol_by_name($sym_name);
     ok($sym, "can find symbol $sym_name");
     is($sym->size, $ARRAY_SIZE, "symbol $sym_name has correct size");
-    my $resident_size = $procs[0]->sizes($file, $sym->range)->{resident_size};
-    is($resident_size, $SA_SYMBOLS{$sym_name}->{resident_fraction} * $ARRAY_SIZE,
+    @sizes = $procs[0]->elf_range_sizes($file, $sym->range);
+    is(scalar @sizes, 1, "one size returned for one range");
+    my $resident_size = $sizes[0]->{resident};
+    is($resident_size,
+       $SA_SYMBOLS{$sym_name}->{resident_fraction} * $ARRAY_SIZE,
        "symbol $sym_name has correct resident size");
 
     # Uninitialised space which is only read appears to be shared.
@@ -152,8 +161,9 @@ foreach my $sym_name (keys %SA_SYMBOLS) {
     # really account for it.
     next if ($sym_name =~ /^uninit_read/);
 
-    my $eff_resident_size
-	= $procs[0]->sizes($file, $sym->range)->{eff_resident_size};
+    @sizes = $procs[0]->elf_range_sizes($file, $sym->range);
+    is(scalar @sizes, 1, "one size returned for one range");
+    my $eff_resident_size = $sizes[0]->{eff_resident};
     my $expected_esize
 	= $SA_SYMBOLS{$sym_name}->{resident_fraction} * $ARRAY_SIZE;
     if (!$SA_SYMBOLS{$sym_name}->{private}) {
@@ -163,7 +173,8 @@ foreach my $sym_name (keys %SA_SYMBOLS) {
 
     # Floating pt calc, so avoid == test
     my $delta = abs($eff_resident_size - $expected_esize);
-    ok($delta < 0.001,  "$sym_name has correct esize");
+    ok($delta < 0.001,
+       "$sym_name has correct esize [$eff_resident_size - $expected_esize]");
 }
 
 
@@ -182,9 +193,9 @@ my $mi_data_size = -s $MI_DAT;
 ok($mi_data_size > 0, "$MI_DAT isn't empty");
 foreach my $proc (@procs) {
     $sizes = $proc->sizes($file);
-    is($sizes->{vm_size}, $mi_data_size, "correct data file size");
-    is($sizes->{resident_size}, $mi_data_size, "whole data file is resident");
-    is($sizes->{eff_resident_size}, $mi_data_size / $NUM_INSTANCES,
+    is($sizes->{vm}, $mi_data_size, "correct data file size");
+    is($sizes->{resident}, $mi_data_size, "whole data file is resident");
+    is($sizes->{eff_resident}, $mi_data_size / $NUM_INSTANCES,
        "data file is shared between instances");
     
     

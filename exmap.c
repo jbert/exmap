@@ -41,20 +41,6 @@ MODULE_LICENSE ("GPL");
 MODULE_AUTHOR ("John Berthels <jjberthels@gmail.com>");
 MODULE_DESCRIPTION ("Show page-level information on all vmas within a task");
 
-struct exmap_page_info
-{
-	/* We return this as a cookie to allow the same page to be
-	 * identified */
-	unsigned long pfn;
-	swp_entry_t swap_entry;
-};
-
-static void clear_page_info(struct exmap_page_info *page_info)
-{
-	page_info->pfn = 0;
-	page_info->swap_entry.val = 0UL; /* All zeros is not a valid entry */
-}
-
 /* Not very nice. We save the data at write() time and then use it at read().
  * We also keep a cursor so that sequential reads work correctly.
  * I'm pretty sure that there are nicer ways to do this.
@@ -71,8 +57,8 @@ struct exmap_vma_data
 {
 	unsigned long vm_start;
 	int start_shown;
-	/* Our vmalloc'ed array of page info */
-	struct exmap_page_info *page_info;
+	/* Our vmalloc'ed array of pte's */
+	pte_t *ptes;
 	unsigned long num_pages;
 	/* Next page to examine, starting at zero for the first in the vma */
 	unsigned long page_cursor;
@@ -101,8 +87,8 @@ static void clear_local_data(void)
 	for (i = 0, vma_data = local_data.vma_data;
 	     i < local_data.num_vmas;
 	     ++i, ++vma_data) {
-		if (vma_data->page_info != NULL) {
-			vfree(vma_data->page_info);
+		if (vma_data->ptes != NULL) {
+			vfree(vma_data->ptes);
 		}
 	}
 	vfree(local_data.vma_data);
@@ -114,16 +100,13 @@ static void clear_local_data(void)
  * struct page. */
 static int walk_page_tables(struct mm_struct *mm,
 			    unsigned long address,
-			    struct exmap_page_info *page_info)
+			    pte_t *pte_ret)
 {
 	pgd_t *pgd;
 	pud_t *pud;
 	pmd_t *pmd;
-	pte_t *ptep, pte;
-	unsigned long pfn;
+	pte_t *ptep;
 
-	clear_page_info(page_info);
-	
 	// No support for HUGETLB as yet
 	//page = follow_huge_addr(mm, address, write);
 	//if (! IS_ERR(page))
@@ -140,25 +123,12 @@ static int walk_page_tables(struct mm_struct *mm,
 	pmd = pmd_offset(pud, address);
 	if (pmd_none(*pmd) || unlikely(pmd_bad(*pmd)))
 		goto out;
-
 	ptep = pte_offset_map(pmd, address);
 	if (!ptep)
 		goto out;
 
-	pte = *ptep;
+	*pte_ret = *ptep;
 	pte_unmap(ptep);
-
-	if (pte_present(pte)) {
-		pfn = pte_pfn(pte);
-		if (pfn_valid(pfn)) {
-			page_info->pfn = pfn;
-		}
-	}
-	else {
-		/* We use the swp_entry as a cookie. */
-		page_info->swap_entry = pte_to_swp_entry(pte);
-	}
-	
 
 	return 0;
 out:
@@ -170,17 +140,21 @@ static void save_vma_page_info(struct vm_area_struct *vma,
 			      struct exmap_vma_data *vma_data)
 {
 	int pageno;
-	struct exmap_page_info *page_info = vma_data->page_info;
+	pte_t *ptep = vma_data->ptes;
 	unsigned long page_addr = vma->vm_start;
 
 	for (pageno = 0;
 	     pageno < vma_data->num_pages;
-	     ++pageno, page_addr += PAGE_SIZE, page_info++) {
-
+	     ++pageno, page_addr += PAGE_SIZE, ptep++) {
+		
 		if (walk_page_tables(vma->vm_mm,
 				     page_addr,
-				     page_info) < 0) {
-			clear_page_info(page_info);
+				     ptep) < 0) {
+			
+			/* This appears to happen. It looks like if
+			 * high enough pages haven't been touched, the
+			 * pmd doens't yet exist. */
+			*ptep = __pte(0);
 		}
 	}
 }
@@ -211,17 +185,16 @@ static int alloc_vmalist_info(struct vm_area_struct *vma_base)
 	}
 
 	/* For each vma_data struct, calculate the number of pages
-	 * and allocate page_info space */
+	 * and allocate pte space */
 	for (vma = vma_base, vma_data = local_data.vma_data;
 	     vma != NULL;
 	     vma = vma->vm_next, vma_data++) {
 		
 		vma_data->num_pages
 			= (vma->vm_end - vma->vm_start) >> PAGE_SHIFT;
-		alloc_size =
-			sizeof(struct exmap_page_info) * vma_data->num_pages;
-		vma_data->page_info = vmalloc(alloc_size);
-		if (vma_data->page_info == NULL) {
+		alloc_size = sizeof(pte_t) * vma_data->num_pages;
+		vma_data->ptes = vmalloc(alloc_size);
+		if (vma_data->ptes == NULL) {
 			printk (KERN_ALERT "/proc/%s : vma vmalloc(%lu) failed",
 				PROCFS_NAME, alloc_size);
 			errcode = -ENOMEM;
@@ -248,8 +221,7 @@ static void store_vmalist_info(struct vm_area_struct *vma_base)
 	struct vm_area_struct *vma;
 	struct exmap_vma_data *vma_data;
 
-	/* For each vma_data struct, calculate the number of pages
-	 * and allocate page_info space */
+	/* For each vma_data struct, fill in the ptes */
 	for (vma = vma_base, vma_data = local_data.vma_data;
 	     vma != NULL;
 	     vma = vma->vm_next, vma_data++) {
@@ -289,21 +261,43 @@ static unsigned long user_atoul (const char __user * ubuf, size_t len)
 /* Add the output line for the given page to the buffer, returning
  * number of chars added. Returns 0 if it can't fit into the
  * buffer. */
-static int show_one_page(struct exmap_page_info *page_info,
-			  char *buffer,
-			  int buflen)
+static int show_one_page(pte_t pte,
+			 char *buffer,
+			 int buflen)
 {
 	int len;
+	unsigned long pfn = 0UL;
+	swp_entry_t swap_entry;
+	int present;
+	int writable;
+	unsigned long cookie;
 
+	swap_entry.val = 0UL; /* All zeros not a valid entry */
+
+	present = pte_present(pte);
+	writable = pte_write(pte) ? 1 : 0;
+	if (present) {
+		pfn = pte_pfn(pte);
+		if (!pfn_valid(pfn)) {
+			pfn = 0;
+		}
+		cookie = pfn;
+	}
+	else {
+		swap_entry = pte_to_swp_entry(pte);
+		cookie = swap_entry.val;
+	}
+	
 	len = snprintf (buffer,
 			buflen,
-			"0x%08lx 0x%08lx\n",
-			page_info->pfn,
-			page_info->swap_entry.val);
-
+			"%d %d 0x%08lx\n",
+			present,
+			writable,
+			cookie);
+	
 	if (len >= buflen)
 		goto ETOOLONG;
-
+	
 	return len;
  ETOOLONG:
 	buffer[0] = '\0';
@@ -336,7 +330,7 @@ static int exmap_show_next(char *buffer, int length)
 {
 	int offset = 0;
 	struct exmap_vma_data *vma_data;
-	struct exmap_page_info *page_info;
+	pte_t pte;
 	int line_len;
 
 	while (local_data.vma_cursor < local_data.num_vmas) {
@@ -361,9 +355,8 @@ static int exmap_show_next(char *buffer, int length)
 		}
 
 		while (vma_data->page_cursor < vma_data->num_pages) {
-			page_info = vma_data->page_info
-				+ vma_data->page_cursor;
-			line_len = show_one_page(page_info,
+			pte = vma_data->ptes[vma_data->page_cursor];
+			line_len = show_one_page(pte,
 						 buffer + offset,
 						 length - offset);
 			if (line_len <= 0)
