@@ -1,8 +1,11 @@
+#
+# (c) John Berthels 2005 <jjberthels@gmail.com>. See COPYING for license.
+#
 use Elf;
 use strict;
 use warnings;
 
-my $DEBUG_ON = 0;
+my $DEBUG_ON = $ENV{EXMAP_DEBUG};
 
 sub debug
 {
@@ -34,8 +37,13 @@ sub DESTROY
 
     
 # ------------------------------------------------------------
+# Map page cookie -> usage count
 package Exmap::PagePool;
 use base qw/Exmap::Obj/;
+
+# This used to be an object with accessors to add pages and read
+# counts.  But they showed up as very hot in profiling, and accessing
+# via a straight hash is still fairly clean.
 
 sub clear
 {
@@ -141,8 +149,9 @@ sub load
 {
     my $s = shift;
     my $progress = shift;
+    my $test_info = shift;
 
-    $s->_load_procs
+    $s->_load_procs($test_info)
 	or return undef;
 
     $progress->number_of_ticks(scalar $s->procs)
@@ -159,17 +168,24 @@ sub load
 sub _load_procs
 {
     my $s = shift;
-
+    my $test_info = shift;
+    
     my $pp = $s->page_pool;
     $pp->clear;
     
     # Don't monitor ourselves, our VMAs etc will change too much as we run
     my @pids = grep { $_ != $$ } $s->_readable_pids();
+    @pids = @{$test_info->{pids}} if $test_info;
 
     my @procs;
     foreach my $pid (@pids) {
-	my $proc = Exmap::Process->new($pid);
-	unless ($proc->load($pp)) {
+
+	my $proc_prefix = "/proc";
+	$proc_prefix = $test_info->{proc} if $test_info;
+	my $exmap_data = $test_info->{exmap_files}->{$pid};
+	
+	my $proc = Exmap::Process->new($pid, $proc_prefix);
+	unless ($proc->load($pp, $exmap_data)) {
 	    warn("Can't load info for pid $pid");
 	    next;
 	}
@@ -188,7 +204,8 @@ sub _calculate_file_mappings
     my $progress = shift;
     
     foreach my $proc ($s->procs) {
-	$proc->_calc_file_maps($s->file_pool);
+	warn("Failed to process maps for pid ", $proc->pid)
+	    unless $proc->_calc_vma_maps($s->file_pool);
 	$progress->tick("Loaded " . $proc->pid . ": " . $proc->cmdline)
 	    if $progress;
     }
@@ -235,8 +252,9 @@ sub _init
 {
     my $s = shift;
     $s->{_pid} = shift;
-    $s->{_exe_name} = readlink "/proc/$s->{_pid}/exe";
-    my @cmdline = split /[ \0]/, `cat /proc/$s->{_pid}/cmdline`;
+    $s->{_proc_prefix} = shift || "/proc";
+    $s->{_exe_name} = readlink "$s->{_proc_prefix}/$s->{_pid}/exe";
+    my @cmdline = split /[ \0]/, `cat $s->{_proc_prefix}/$s->{_pid}/cmdline`;
     if (@cmdline > 1) {
 	# Hack so we can see [kdeinit]
 	if ($cmdline[1] =~ /^\[/ ) {
@@ -255,8 +273,10 @@ sub load
 {
     my $s = shift;
     my $page_pool = shift;
+    my $test_exmap_file = shift; # Or undef for the real exmap
+    
     $s->_load_vmas($page_pool) or return undef;
-    $s->_load_page_info($page_pool) or return undef;
+    $s->_load_page_info($test_exmap_file) or return undef;
     return 1;
 }
 
@@ -273,7 +293,7 @@ sub _find_vma_by_hex_addr
     my $hex_addr = shift;
 
     foreach my $vma ($s->_vmas) {
-	return $vma if $vma->{info}->{'hex_start'} eq $hex_addr;
+	return $vma if $vma->{info}->{hex_start} eq $hex_addr;
     }
     return undef;
 }
@@ -354,39 +374,20 @@ sub _refine_maps_to_elf_range
 				   : "undef" } @maps);
 	warn($warnstr);
     }
-	    
-
-    if (@refinements > 1) {
-	# Check there are no holes...
-	my $addr;
-	warn("first refinement doesn't reach end of map")
-	    unless $refinements[0]->{range}->end
-		== $refinements[0]->{map}->mem_range->end;
-	warn("last refinement doesn't start at start of map")
-	    unless $refinements[-1]->{range}->start
-		== $refinements[-1]->{map}->mem_range->start;
-
-	my @middle = @refinements;
-	shift @middle;
-	pop @middle;
-	foreach my $r (@middle) {
-	    warn("a middle refinement doesn't span the map range")
-		unless $r->{range}->equals($r->{map}->mem_range);
-	}
-    }
     
     return @refinements;
 }
 
 
-sub _sum_map_info_over_file_and_elf_range
+# This takes on optional 'file' parameter, which may also be followed
+# by an optional 'elf_range' parameter. These are both used to restrict the
+# maps to be summed over.
+sub sizes
 {
     my $s = shift;
-    my $key = shift;
     my $file = shift;
     my $elf_range = shift;
 
-    my $total = 0;
 
     my @maps = $s->maps;
     warn ("No maps in process", $s->pid) unless @maps;
@@ -401,48 +402,27 @@ sub _sum_map_info_over_file_and_elf_range
     my @refinements = map { { map => $_,
 				  range => undef } } @maps;
 
-    if ($elf_range) {
-	return 0 if ($elf_range->size == 0);
+    # elf_range is only meaningful if restricting to a single file
+    if ($file && $elf_range) {
+#	return 0 if ($elf_range->size == 0);
 	@refinements = $s->_refine_maps_to_elf_range($elf_range, @maps);
     }
-    foreach my $refinement (@refinements) {
-	my $val = $refinement->{map}->size_for_mem_range($key,
-							 $refinement->{range});
-	die("undefined val for $key in $refinement->{map}")
-	    unless defined $val;
-	$total += $val;
+    my $sizes = Exmap::Sizes->new;
+    foreach my $r (@refinements) {
+	my $subsizes = $r->{map}->sizes_for_mem_range($r->{range});
+	$sizes->add($subsizes);
     }
 
-    return $total;
+    return $sizes;
 }
-
-# The '_size' functions take an optional 'file' parameter, which may
-# also be followed by an 'elf_range' parameter.
-sub vm_size
-{
-    my $s = shift;
-    return $s->_sum_map_info_over_file_and_elf_range('vm_size', @_);
-}
-
-sub mapped_size
-{
-    my $s = shift;
-    return $s->_sum_map_info_over_file_and_elf_range('mapped_size', @_);
-}
-
-sub effective_size
-{
-    my $s = shift;
-    return $s->_sum_map_info_over_file_and_elf_range('effective_size', @_);
-}
-
 
 sub _load_vmas
 {
     my $s = shift;
     my $page_pool = shift;
+
+    my $mapfile = "$s->{_proc_prefix}/" . $s->pid . "/maps";
     
-    my $mapfile = "/proc/".$s->pid."/maps";
     unless (open (M, "< $mapfile")) {
 	warn("Can't open mapfile $mapfile: $!");
 	return undef;
@@ -465,7 +445,9 @@ sub _load_vmas
 	    warn("Can't create VMA for line $line");
 	    next;
 	}
-	push @vmas, $vma;
+	# Don't add the [vdso] map, it doesn't exist as a vma
+	# in the kernel.
+	push @vmas, $vma unless $vma->is_vdso;
     }
     $s->{_vmas} = \@vmas;
     
@@ -475,23 +457,34 @@ sub _load_vmas
 sub _load_page_info
 {
     my $s = shift;
+    my $test_exmap_file = shift;
 
+    my $exmap_file = $test_exmap_file ? $test_exmap_file : EXMAP_FILE;
     # Ask exmap about our pid
-    unless (open(E, "+> ".EXMAP_FILE)) {
-	warn("can't open ".EXMAP_FILE." for writing : $!");
-	return undef;
+    if ($test_exmap_file) {
+	unless(open (E, "< $exmap_file")) {
+	    warn("can't open test exmap file $test_exmap_file");
+	    return undef;
+	}
     }
-    print E $s->pid, "\n";
+    else {
+	unless (open(E, "+> $exmap_file")) {
+	    warn("can't open $exmap_file for writing : $!");
+	    return undef;
+	}
+	print E $s->pid, "\n";
+    }
+    
 
     my $current_vma;
-    my ($pfn, $mapcount, $line);
+    my ($pfn, $swap_entry, $line);
     while ($line = <E>) {
 	# Lines are either:
 	# Start a new VMA:
 	# VMA 0xdeadbeef <npages>
 	# or
 	# Page info
-	# <pfn> <mapcount>
+	# <pfn> <swap_entry>
 
 	if ($line =~ /^VMA/) {
 	    # New VMA
@@ -505,8 +498,9 @@ sub _load_page_info
 	    $current_vma = $vma;
 	}
 	else {
-	    ($pfn, $mapcount) = split(/\s+/, $line);
-	    $current_vma->add_page($pfn, $mapcount);
+	    ($pfn, $swap_entry) = split(/\s+/, $line);
+	    my $page = Exmap::Page->new($pfn, $swap_entry);
+	    $current_vma->add_page($page);
 	}
     }
     close E;
@@ -515,142 +509,52 @@ sub _load_page_info
 }
 
 
-sub _calc_file_maps
+sub _calc_vma_maps
 {
     my $s = shift;
     my $filepool = shift;
 
     my @maps; # Accumulate all the per-proc maps in here
-
-    # State variables for the loop. We walk addr up from the first vma->start
-    # to the last vma end, consuming vmas and segments as we go. When we switch
-    # to a new ELF file, we refresh segments.
-    my $addr;
-    my @segments;
     my @vmas = $s->_vmas;
-    # Adding this to a seg mem address makes it a vma address
-    my $seg_addr_offset;
 
-    $addr = $vmas[0]->{info}->{'start'};
+    my $previous_vma;
+    my $previous_file;
+    foreach my $vma (@vmas) {
+	my $file = $filepool->get_or_make_file($vma->{info}->{file});
 
-    ::debug("PID " . $s->pid . " starting with " . scalar @vmas . " vmas");
-    my $file;
-    while (@vmas) {
-	my $map;
-	my $vma = $vmas[0];
+	my @vma_maps = $vma->calc_maps($file,
+				       $previous_vma,
+				       $previous_file,
+				       $s->pid);
+
+	warn sprintf("%d: Can't calc maps for vma 0x%08x : %s",
+		     $s->pid, $vma->{info}->{start}, $file->name)
+	    unless @vma_maps;
 	
-	my $vma_start = $vma->{info}->{'start'};
-	$addr = $vma_start if $addr < $vma_start;
-
-	my $vma_end = $vma->{info}->{'end'};
-	if ($addr >= $vma_end) {
-	    warn(sprintf "%d: address 0x%08x at or after vma end 0x%08x",
-		 $s->pid, $addr, $vma_end);
-	    return undef;
-	}
-
-	my $vma_fname = $vma->{info}->{'file'};
-	
-	# Did we finish the previous?
-	if (@segments == 0) {
-	    my $newfile = $filepool->get_or_make_file($vma_fname);
-	    if ((!$file || $newfile != $file)
-		&& $newfile->is_elf) {
-		@segments = $newfile->elf->loadable_segments;
-		$seg_addr_offset = $vma_start - $segments[0]->mem_range->start;
-	    }
-	    $file = $newfile;
-	}
-
-	::debug(sprintf "looping with addr 0x%08x nvmas %d nsegs %d file %s",
-		$addr, scalar @vmas, scalar @segments, $vma_fname);
-
-	# Bind file and proc
+	push @maps, @vma_maps;
 	$s->add_file($file);
-	$file->add_proc($s);
-
-
-	# Take out the non-ELF case
-	if (@segments == 0) {
-	    # Non-elf, so a Map with no elf range. It doesn't necessarily
-	    # cover the whole VMA, since we could be an [anon] (or [heap])
-	    # map whose first portion is the .bss of a preceding elf.
-	    $map = Exmap::Map->new($vma,
-				   Range->new($addr,
-					      $vma_end),
-			    undef);
-	    ::debug("added non-elf map", $map->mem_range->to_string,
-		    " ", $map->_vma->{info}->{'file'});
-	    $addr = $vma_end;
-	    goto FOUND_MAP;
-	}
-
-	# OK, we are an ELF map (not necessarily an ELF File obj, because
-	# we could be into an [anon] map covering .bss, but we'll still be in
-	# a segment)
-	my $seg = $segments[0];
-
-	my $seg_mem_range = $seg->mem_range->add($seg_addr_offset);
-	
-	if ($addr < $seg_mem_range->start) {
-	    # We've got a hole.
-	    my $hole_end = $seg_mem_range->start > $vma_end
-		? $vma_end : $seg_mem_range->start;
-
-	    $map = Exmap::Map->new($vma,
-				   Range->new($addr, $hole_end),
-				   undef);
-	    ::debug("added hole map", $map->mem_range->to_string);
-	    $addr = $hole_end;
-	    goto FOUND_MAP;
-	}
-	
-	if (!$seg_mem_range->contains($addr)) {
-	    warn(sprintf "addr 0x%08x outside of seg_mem_range %s",
-		 $addr, $seg_mem_range->to_string);
-	    return undef;
-	}
-
-	# The map can only extend to the end of the segment or vma.
-	# And maps are page-aligned.
-	my $end_addr = $seg_mem_range->end;
-	$end_addr = $vma_end if ($end_addr > $vma_end);
-
-	my $map_mem_range = Range->new($addr, $end_addr);
-
-	# And this range of the ELF file. (Possibly empty, we may be
-	# into .bss)
-
-	# Elf range starts same as the mem range
-	# We shift back to seg vaddrs
-	my $map_elf_range = $map_mem_range->subtract($seg_addr_offset);
-
-	$map = Exmap::Map->new($vma, $map_mem_range, $map_elf_range);
-	::debug("adding elf map mem", $map->mem_range->to_string,
-		" elf ", defined $map->elf_range ? $map->elf_range->to_string : "undef",
-	        " ", $map->_vma->{info}->{'file'} );
-
-	$addr = $end_addr;
-
-    FOUND_MAP:
-	$file->add_map($map);
-	push @maps, $map;
-	# Consume any segments or vmas we have finished with.
-	if ($addr >= $vmas[0]->{info}->{'end'}) {
-	    shift @vmas;
-	    ::debug("consuming vma");
-	}
-	
-	if (@segments
-	    && $addr >= ($segments[0]->mem_range->end + $seg_addr_offset)) {
-	    shift @segments;
-	    ::debug("consuming segment");
-	}
+	$previous_vma = $vma;
+	$previous_file = $file;
     }
-    
+
+    my @ranges = map { $_->mem_range } @maps;
+    my $last_range;
+    foreach my $range (@ranges) {
+	if ($last_range) {
+	    if ($range->overlaps($last_range)) {
+		warn sprintf("%d: Invalid map list %s, %s",
+			     $s->pid,
+			     $last_range->to_string,
+			     $range->to_string);
+		return undef;
+	    }
+	}
+	$last_range = $range;
+    }
+
     $s->{_maps} = \@maps;
-    
-    return 1;
+
+    return scalar @maps;
 }
 
 
@@ -677,40 +581,17 @@ sub elf { return $_[0]->{_elf}; }
 sub is_elf { return $_[0]->elf; } # Mmmm. Sugary.
 sub maps { return @{$_[0]->{_maps}}; }
 
-sub _sum_map_info
+sub sizes
 {
     my $s = shift;
-    my $subref = shift;
 
-    my $total = 0;
+    my $sizes = Exmap::Sizes->new;
+
     foreach my $map ($s->maps) {
-	$total += $subref->($map);
+	my $subsizes = $map->sizes_for_mem_range;
+	$sizes->add($subsizes);
     }
-    return $total;
-}
-
-sub vm_size
-{
-    my $s = shift;
-    my $subref = sub { my $map = shift;
-		       return $map->vm_size_for_mem_range; };
-    return $s->_sum_map_info($subref);
-}
-
-sub mapped_size
-{
-    my $s = shift;
-    my $subref = sub { my $map = shift;
-		       return $map->mapped_size_for_mem_range; };
-    return $s->_sum_map_info($subref);
-}
-
-sub effective_size
-{
-    my $s = shift;
-    my $subref = sub { my $map = shift;
-		       return $map->effective_size_for_mem_range; };
-    return $s->_sum_map_info($subref);
+    return $sizes;
 }
 
 sub add_map
@@ -745,9 +626,11 @@ sub _init
 {
     my $s = shift;
     $s->{_page_pool} = shift;
-    $s->{_pfns} = [];
+    $s->{_pages} = [];
     return $s;
 }
+
+sub page_pool { return $_[0]->{_page_pool}; }
 
 sub parse_line
 {
@@ -784,46 +667,35 @@ sub _calculate_info
     # type is still 32-bit. So perl warns here.
     { # New scope for local warning var
 	local $^W = 0;
-	$info->{start} = hex $info->{'hex_start'};
-	$info->{offset} = hex $info->{'hex_offset'};
-	$info->{end} = hex $info->{'hex_end'};
+	$info->{start} = hex $info->{hex_start};
+	$info->{offset} = hex $info->{hex_offset};
+	$info->{end} = hex $info->{hex_end};
     }
     $info->{vm_size} = $info->{end} - $info->{start};
 
     return 1
 }
 
-#sub info
-#{
-#    return $_[0]->{_info}->{$_[1]};
-#}
-
 sub add_page
 {
     my $s = shift;
-    my $pfn = shift;
-    my $mapcount = shift;
+    my $page = shift;
 
-    # The 'zero' pfn is an absent page
-    $pfn = undef if hex($pfn) == 0;
-    
     # Record all pages, in order
-    push @{$s->{_pfns}}, $pfn;
+    push @{$s->{_pages}}, $page;
 
-    if ($pfn) {
-	# This page is mapped
-	$s->{info}->{mapped_size} += Elf::PAGE_SIZE;
-	$s->{_page_pool}->{$pfn}++;
-    }
-    
+    $s->{_page_pool}->{$page->cookie}++;
+
     return 1;
 }
+
+sub is_vdso { return $_[0]->{info}->{file} eq VDSO_NAME; }
 
 sub is_file_backed
 {
     my $s = shift;
     # Names like [anon], [heap], and [vdso] don't count as file backed
-    return  !($s->{info}->{'file'} =~ /^\[.*\]$/);
+    return  !($s->{info}->{file} =~ /^\[.*\]$/);
 }
 
 sub _addr_to_pgnum
@@ -831,34 +703,31 @@ sub _addr_to_pgnum
     my $s = shift;
     my $addr = shift;
 
-    if ($addr >= $s->{info}->{'end'}) {
-	warn("$addr is beyond vma end " . $s->{info}->{'end'});
+    if ($addr >= $s->{info}->{end}) {
+	warn("$addr is beyond vma end " . $s->{info}->{end});
 	return undef;
     }
     
     my $pgnum = Elf::page_align_down($addr);
-    $pgnum -= $s->{info}->{'start'};
+    $pgnum -= $s->{info}->{start};
     if ($pgnum < 0) {
-	warn("$addr is less than vma start " . $s->{info}->{'start'});
+	warn("$addr is less than vma start " . $s->{info}->{start});
 	return undef;
     }
 #    $pgnum /= Elf::PAGE_SIZE;
     $pgnum >>= Elf::PAGE_SIZE_SHIFT;
 
-    # The '[vdso]' region doesn't show up in the Exmap output.
-    # Hack in a placeholder here for absent pages.
-    # TODO - make this hack vdso specific
-    $s->{_pfns}->[$pgnum] ||= 0;
-    
     return $pgnum;
 }
 
-sub get_page_counts_for_range
+sub get_pages_for_range
 {
     my $s = shift;
     my $range = shift;
 
     return undef unless $range->size > 0;
+
+    my $vma_fname = $s->{info}->{file};
     
     my $start_pgnum = $s->_addr_to_pgnum($range->start);
     return undef unless defined $start_pgnum;
@@ -866,52 +735,231 @@ sub get_page_counts_for_range
     return undef unless defined $end_pgnum;
 
     if ($start_pgnum == $end_pgnum) {
-	my $pfn = $s->{_pfns}->[$start_pgnum];
-	unless (defined $pfn) {
-	    warn("Can't find pfn for pgnum $start_pgnum");
+	my $page = $s->{_pages}->[$start_pgnum];
+	unless (defined $page) {
+	    warn("Can't find page for pgnum $start_pgnum in $vma_fname");
 	    return undef;
 	}
 	return [{
-		 count => $pfn ? $s->{_page_pool}->{$pfn} : 0,
+		 page => $page,
 		 bytes => $range->size,
 		}];
     }
 
 
     my @info;
-    my $pfn;
+    my $page;
     
-    $pfn = $s->{_pfns}->[$start_pgnum];
-    if ($pfn) {
-#	die("PFN $pfn has a zero count") unless $count > 0;
-	push @info, { count => $s->{_page_pool}->{$pfn},
-		      bytes => Elf::PAGE_SIZE
-		      - ($range->start - Elf::page_align_down($range->start))};
+    $page = $s->{_pages}->[$start_pgnum];
+    unless (defined $page) {
+	warn("Can't find page for pgnum $start_pgnum in $vma_fname");
+	return undef;
     }
+    push @info, { page => $page,
+		  bytes => Elf::PAGE_SIZE
+		  - ($range->start - Elf::page_align_down($range->start))};
     
-    $pfn = $s->{_pfns}->[$end_pgnum];
-    if ($pfn) {
-#	die("PFN $pfn has a zero count") unless $count > 0;
-	push @info, { count => $s->{_page_pool}->{$pfn},
-		      bytes =>
-		      $range->end - Elf::page_align_down($range->end - 1) };
+    $page = $s->{_pages}->[$end_pgnum];
+    unless (defined $page) {
+	warn("Can't find page for pgnum $end_pgnum in $vma_fname");
+	return undef;
     }
+    push @info, { page => $page,
+		  bytes =>
+		  $range->end - Elf::page_align_down($range->end - 1) };
 
     for (my $pgnum = $start_pgnum+1; $pgnum <= $end_pgnum-1; ++$pgnum) {
-	$pfn = $s->{_pfns}->[$pgnum];
-	if ($pfn) {
-#	    die("PFN $pfn has a zero count") unless $count > 0;
-	    push @info, { count => $s->{_page_pool}->{$pfn},
-			  bytes => Elf::PAGE_SIZE };
+	$page = $s->{_pages}->[$pgnum];
+	unless (defined $page) {
+	    warn("Can't find page for pgnum $pgnum in $vma_fname");
+	    return undef;
 	}
-	else {
-	    push @info, { count => 0,
-			  bytes => Elf::PAGE_SIZE };
-	}
+	push @info, { page => $page,
+		      bytes => Elf::PAGE_SIZE };
     }
 
     return \@info;
 }
+
+sub range
+{
+    my $s = shift;
+    # TODO - do we call this often enough to cache this value?
+    return Range->new($s->{info}->{start}, $s->{info}->{end});
+}
+
+# Come up with a list of elf maps which exactly cover this vma.  We
+# can refer back to the previous vma & file to clarify the various
+# cases.
+#
+# Cases: (1) This is an elf backed vma.  Then for each loadable
+# segment, we calculate the elf address->vma address offset and work
+# out which how much of the segment overlaps our address space. We
+# turn those into maps and any holes into anon maps.
+#
+# (2a) This is not a file backed vma
+# AND previous is file backed
+# AND previous file is elf
+# AND this vma is contiguous with the previous
+# In which case we take the previous vma's segments and offsets
+# and see if we have an overlap. We assert that the overlap will
+# be at the beginning of this vma.
+# Any remainder gets added turned into an anon map
+#
+# (2b) This is not a file backed vma and some or all of the
+# previous conditions do not hold. In which case we turn the entire vma
+# into an anon map.
+#
+# We roll 2a and 2b together, by doing (2b) from a calculated
+# start address.
+sub calc_maps
+{
+    my $s = shift;
+    my $file = shift;
+    my $previous_vma = shift;
+    my $previous_file = shift;
+    my $pid = shift; # For debugging
+
+    my @maps;
+    my @segs;
+
+    ::debug(sprintf "%d: calc_maps", $pid);
+    if ($file->is_elf) {
+	# Case 1
+	@segs = $file->elf->loadable_segments if $file->is_elf;
+
+	foreach my $seg (@segs) {
+	    my $seg_to_mem = $s->_get_seg_to_mem($seg);
+	    my $seg_mem_range = $seg->mem_range->add($seg_to_mem);
+	    my $subrange = $seg_mem_range->intersect($s->range);
+	    next unless $subrange && $subrange->size > 0;
+	    my $elf_subrange = $subrange->subtract($seg_to_mem);
+	    my $map = Exmap::Map->new($s, $subrange, $elf_subrange);
+
+	    ::debug(sprintf "%d: added elf map %s", $pid, $map->to_string);
+	    push @maps, $map;
+	    $file->add_map($map);
+	}
+
+	# Add holes
+	my @mem_ranges = map { $_->mem_range } @maps;
+	my $hole_ranges = $s->range->invert_list(@mem_ranges);
+	my @hole_maps = map {
+	    my $hmap = Exmap::Map->new($s, $_);
+	    ::debug(sprintf "%d: added hole map %s", $pid, $hmap->to_string);
+	    $file->add_map($hmap);
+	    $hmap;
+	} @$hole_ranges if $hole_ranges;
+	
+	push @maps, @hole_maps;
+    }
+    else {
+	# Cases 2a and 2b
+	my $non_elf_map;
+	if ($previous_vma->is_file_backed
+	    && $previous_file->is_elf
+	    && $s->range->start == $previous_vma->range->end) {
+
+	    # Case 2a - a the last elf segment could be continuing
+	    # from the previous vma
+
+	    my @prev_segs = $previous_file->elf->loadable_segments;
+	    my $non_elf_start = $s->{info}->{start};
+	    
+	    # TODO - this is cut-and-paste from previous (with some
+	    # differences). Make this a vma method.
+	    my $seg = $prev_segs[-1];
+
+	    my $seg_to_mem = $previous_vma->_get_seg_to_mem($seg);
+	    my $seg_mem_range = $seg->mem_range->add($seg_to_mem);
+	    my $subrange = $seg_mem_range->intersect($s->range);
+	    if ($subrange && $subrange->size > 0) {
+		unless ($subrange->start == $s->{info}->{start}) {
+		    warn sprintf("%d: cont seg mismatch vma 0x%08x != 0x%08x",
+				 $subrange->start, $s->{info}->{start});
+		    # Error return or continue?
+		}
+		my $elf_subrange = $subrange->subtract($seg_to_mem);
+		my $map = Exmap::Map->new($s, $subrange, $elf_subrange);
+		$non_elf_start = $subrange->end;
+	    
+		::debug(sprintf "%d: added elf cont map %s",
+			$pid, $map->to_string);
+		push @maps, $map;
+		$previous_file->add_map($map);
+	    }
+	    if ($non_elf_start < $s->{info}->{end}) {
+		$non_elf_map = Exmap::Map->new($s,
+					       Range->new($non_elf_start,
+							  $s->{info}->{end},
+							  undef));
+		::debug(sprintf "%d: added non-elf map %s",
+			$pid, $non_elf_map->to_string);
+	    }
+	}
+	else {
+	    # We just cover this vma with a non-elf range
+	    $non_elf_map = Exmap::Map->new($s, $s->range, undef);
+	    ::debug(sprintf "%d: added non-elf map %s",
+		    $pid, $non_elf_map->to_string);
+	}
+	if ($non_elf_map) {
+	    push @maps, $non_elf_map;
+	    $file->add_map($non_elf_map);
+	}
+    }
+
+    # Ensure they're in the right order.
+    @maps = sort { $a->mem_range->start <=> $b->mem_range->start } @maps;
+
+    # Sanity-check the maps
+    my @ranges = map { $_->mem_range } @maps;
+    if ($ranges[0]->start != $s->range->start) {
+	warn sprintf("%d: first map not at start 0x%08x: %s",
+	    $pid, $s->range->start, $ranges[0]->to_string);
+	return ();
+    }
+    if ($ranges[-1]->end != $s->range->end) {
+	warn sprintf("%d: last map not at end 0x%08x: %s",
+	    $pid, $s->range->end, $ranges[-1]->to_string);
+	return ();
+    }
+
+    my $last_range;
+    foreach my $range (@ranges) {
+	unless ($range->size > 0) {
+	    warn sprintf("%d: zero length map %s", $pid, $range->to_string);
+	    return ();
+	}
+	if ($last_range) {
+	    unless ($last_range->end == $range->start) {
+		warn sprintf("%d: Invalid map list %s, %s",
+			     $pid,
+			     $last_range->to_string,
+			     $range->to_string);
+		return ();
+	    }
+	}
+	$last_range = $range;
+    }
+
+    return @maps;
+}
+
+
+sub _get_seg_to_mem
+{
+    my $s = shift;
+    my $seg = shift;
+
+    # Offset isn't valid unless we have a backing file
+    return undef unless $s->is_file_backed;
+    
+    my $segmem_base = $seg->mem_range->start - $seg->offset;
+    my $vmamem_base = $s->{info}->{start} - $s->{info}->{offset};
+    return $vmamem_base - $segmem_base;
+}
+
 
 # ------------------------------------------------------------
 package Exmap::Map;
@@ -955,77 +1003,39 @@ sub elf_to_mem_range
     return $elf_range->add($s->elf_to_mem_offset);
 }
 
-sub effective_size_for_mem_range
+
+sub sizes_for_mem_range
 {
     my $s = shift;
     my $mrange = shift;
+
     my $subrange = $mrange
 	? $s->mem_range->intersect($mrange)
 	    : $s->mem_range;
+
+    my $sizes = Exmap::Sizes->new;
+    return $sizes unless $subrange->size > 0;
+
+    my $infolist = $s->_vma->get_pages_for_range($subrange);
+    my $pagepool = $s->_vma->page_pool;
     
-    return 0 unless $subrange->size > 0;
+    $sizes->{vm_size} = $subrange->size;
 
-    my $infolist = $s->_vma->get_page_counts_for_range($subrange);
-
-    my $total = 0;
     foreach my $info (@$infolist) {
-	if ($info->{count} > 0) {
-	    $total += $info->{bytes} / $info->{count};
+	my $count = $pagepool->{$info->{page}->cookie};
+	die ("Zero count in pagepool for $info->{page}") unless $count >0;
+
+	if ($info->{page}->is_mapped) {
+	    $sizes->{eff_mapped_size} += $info->{bytes} / $count;
+	    $sizes->{mapped_size} += $info->{bytes};
+	}
+	if ($info->{page}->is_resident) {
+	    $sizes->{eff_resident_size} += $info->{bytes} / $count;
+	    $sizes->{resident_size} += $info->{bytes};
 	}
     }
 
-    return $total;
-}
-
-sub vm_size_for_mem_range
-{
-    my $s = shift;
-    my $mrange = shift;
-    my $subrange = $mrange
-	? $s->mem_range->intersect($mrange)
-	    : $s->mem_range;
-    return $subrange->size;
-}
-
-sub mapped_size_for_mem_range
-{
-    my $s = shift;
-    my $mrange = shift;
-    my $subrange = $mrange
-	? $s->mem_range->intersect($mrange)
-	    : $s->mem_range;
-    return 0 unless $subrange->size > 0;
-
-    my $infolist = $s->_vma->get_page_counts_for_range($subrange);
-
-    my $total = 0;
-    foreach my $info (@$infolist) {
-	if ($info->{count} > 0) {
-	    $total += $info->{bytes};
-	}
-    }
-
-    return $total;
-}
-
-# Polymorphism? Whats that?
-sub size_for_mem_range
-{
-    my $s = shift;
-    my $key = shift;
-    my $range = shift;
-    
-    if ($key eq "vm_size") {
-	return $s->vm_size_for_mem_range($range);
-    }
-    elsif ($key eq "effective_size") {
-	return $s->effective_size_for_mem_range($range);
-    }
-    elsif ($key eq "mapped_size") {
-	return $s->mapped_size_for_mem_range($range);
-    }
-
-    die("Invalid key");
+    return $sizes;
 }
 
 sub to_string
@@ -1035,8 +1045,181 @@ sub to_string
 	. $s->mem_range->to_string
 	    . " ELF "
 		. ($s->elf_range ? $s->elf_range->to_string : "undef")
-		    . " FILE " . $s->_vma->{info}->{'file'};
+		    . " FILE " . $s->_vma->{info}->{file};
     
+}
+
+# ------------------------------------------------------------
+package Exmap::Page;
+
+# We identify a unique page by a combination of 'pfn' and 'swap_entry',
+# i.e. these are combined to form a unique per-page cookie.
+
+# Pages can be in the following states:
+# Resident (has a non-zero pfn)
+# Swapped (has a zero pfn and a non-zero swap_entry)
+# Unmapped (has a zero pfn and an zero swap_entry)
+#
+
+# We use a scalar ref as the object to save memory.
+
+sub new
+{
+    my $c = shift;
+    $c = ref $c if ref $c;
+
+    my $pfn = shift;
+    my $swap_entry = shift;
+    # We store a lot of these, so trim down the string lengths
+    $pfn =~ s/^0x//;
+    $swap_entry =~ s/^0x//;
+    # OK, this maps the common (32-bit) 0x00000000 -> 0x0, but is also
+    # safe for runs of zeros in 64-bit addresss, since even if they
+    # get mapped down, we only ever compare for cookie equality, not
+    # ordering.
+    $pfn =~ s/00000000/0/g;
+    $swap_entry =~ s/00000000/0/g;
+
+    my $self = $pfn . "X" . $swap_entry;
+    my $s = \$self;
+    bless $s, $c;
+
+    die("Page has valid pfn and swap_entry")
+	if ($s->is_resident && $s->is_swapped);
+
+    return $s;
+}
+
+# The cookie is the object
+sub cookie
+{
+    my $s = shift;
+    return $$s;
+}
+
+sub is_resident
+{
+    my $s = shift;
+    return !($$s =~ /^0+X/);
+}
+
+sub is_swapped
+{
+    my $s = shift;
+    return !($$s =~ /X0+$/);
+}
+
+sub is_mapped { return $_[0]->is_resident || $_[0]->is_swapped; }
+
+# ------------------------------------------------------------
+package Exmap::Sizes;
+
+sub new
+{
+    my $c = shift;
+    my $s = {};
+    bless $s, $c;
+    foreach my $key ($s->keys) {
+	$s->{$key} = 0;
+    }
+    $s->{_scale_factor} = 1;
+    $s->{_scale_name} = "";
+    return $s;
+}
+
+my %SIZE_NAMES = (
+		  vm_size => "VM",
+		  resident_size =>  "Resident",
+		  eff_resident_size => "Eff. Resident",
+		  mapped_size => "Mapped",
+		  eff_mapped_size => "Eff. Mapped",
+		 );
+
+sub keys
+{
+    # Bit of a cheat, we want the eff_ ones first and the alphasort
+    # to the front. :-/
+    return sort keys %SIZE_NAMES;
+}
+
+# All the svals, in the same order returned by ->keys
+sub all_svals
+{
+    my $s = shift;
+    return map { $s->sval($_) } $s->keys;
+}
+
+sub key_names
+{
+    my $s = shift;
+    return map { $s->key_name($_) } $s->keys;
+}
+
+sub scale_kbytes
+{
+    my $s = shift;
+    $s->_scale_factor(1024);
+    $s->_scale_name("K");
+}
+
+sub scale_mbytes
+{
+    my $s = shift;
+    $s->_scale_factor(1024*1024);
+    $s->_scale_name("Mbytes");
+}
+
+sub _scale_factor
+{
+    my $s = shift;
+    my $scale_factor = shift;
+    if ($scale_factor) {
+	$s->{_scale_factor} = $scale_factor;
+    }
+    return $s->{_scale_factor};
+}
+
+sub _scale_name
+{
+    my $s = shift;
+    my $val = shift;
+    if ($val) {
+	$s->{_scale_name} = $val
+    }
+    return $s->{_scale_name};
+}
+
+# Return the value divided by the current scaling factor, to 2 dec places
+sub sval
+{
+    my $s = shift;
+    my $key = shift;
+    my $val = $s->{$key} / $s->_scale_factor;
+    $val *= 100;
+    $val = int $val;
+    $val /= 100;
+    return $val;
+}
+
+sub key_name
+{
+    my $s = shift;
+    my $key = shift;
+    return $SIZE_NAMES{$key} . " " . $s->_scale_name;
+}
+
+sub add
+{
+    my $s = shift;
+    my $r = shift;
+
+    foreach my $key ($r->keys) {
+	my $val = $r->{$key};
+	die("undefined size for $key")
+	    unless defined $val;
+	$s->{$key} += $val;
+    }
+    return 1;
 }
 
 1;

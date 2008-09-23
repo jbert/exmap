@@ -1,3 +1,4 @@
+/* (c) John Berthels 2005 <jjberthels@gmail.com>. See COPYING for license */
 #include "sharedarray.h"
 #include <stdio.h>
 

@@ -1,9 +1,12 @@
 #!/usr/bin/perl
+#
+# (c) John Berthels 2005 <jjberthels@gmail.com>. See COPYING for license.
+#
 use strict;
 use warnings;
-use Test::More tests => 70;
+use Test::More tests => 115;
 
-use_ok qw(Range);
+BEGIN { use_ok qw(Range); }
 
 my $r = Range->new(0, -1);
 ok(!$r, "Can't have reversed range");
@@ -109,3 +112,124 @@ is($t->start, $r->start, "have same start");
 is($t->end, $r->end, "have same end");
 is($t->size, $r->size, "have same size");
 
+
+my @r = (Range->new(1, 2),
+	 Range->new(3, 5),
+	 Range->new(5, 7));
+
+ok(!$r[0]->merge($r[1]), "Can't merge non-adjacent");
+ok($r[1]->merge($r[2]), "Can merge adjacent");
+ok($r[1]->merge($r[2])->equals(Range->new(3, 7)), "Can merge adjacent 2");
+
+$r = Range->new(1, 2)->merge(Range->new(1, 2));
+ok($r, "self merge succeeds");
+ok(Range->new(1, 2)->equals($r), "self merge returns self");
+
+$r = Range->new(1, 3)->merge(Range->new(2, 4));
+ok($r, "overlap merge succeeds");
+ok(Range->new(1, 4)->equals($r), "overlap merge correct");
+
+$r = Range->new(2, 4)->merge(Range->new(1, 3));
+ok($r, "reverse overlap merge succeeds");
+ok(Range->new(1, 4)->equals($r), "reverse overlap merge correct");
+
+
+my @mr = Range::merge_list(@r);
+is(scalar @mr, 2, "merged list has 2 entries");
+ok($mr[0]->equals($r[0]), "first elt unchanged");
+ok($mr[1]->equals(Range->new(3, 7)), "second elf merged");
+
+@r = ();
+@mr = Range::merge_list(@r);
+is(scalar @mr, 0, "merging empty list leaves empty");
+
+@r = (Range->new(1, 3));
+@mr = Range::merge_list(@r);
+is(scalar @mr, 1, "merging single elt list leaves one elt");
+ok($mr[0]->equals(Range->new(1, 3)),
+   "merging single elt list leaves unchanged");
+
+@r = (Range->new(1, 3), Range->new(5, 10));
+@mr = Range::merge_list(@r);
+is(scalar @mr, 2, "merging unmergable list doesn't change no of elts");
+ok($mr[0]->equals(Range->new(1, 3)), "unmergeable 1");
+ok($mr[1]->equals(Range->new(5, 10)), "unmergeable 1");
+
+@r = (Range->new(1, 2),
+      Range->new(2, 3),
+      Range->new(3, 4),
+      Range->new(4, 5));
+@mr = Range::merge_list(@r);
+is(scalar @mr, 1, "merging 4 into 1 count");
+ok($mr[0]->equals(Range->new(1, 5)), "merge 4 into 1");
+
+@r = (Range->new(1, 2),
+      Range->new(1, 2));
+@mr = Range::merge_list(@r);
+is(scalar @mr, 1, "merging 2 into 1 count");
+ok($mr[0]->equals(Range->new(1, 2)), "merge 2 into 1");
+
+@r = (Range->new(2, 4),
+      Range->new(1, 3));
+@mr = Range::merge_list(@r);
+is(scalar @mr, 1, "merging 2 into 1 count b");
+ok($mr[0]->equals(Range->new(1, 4)), "merge 2 into 1 b");
+
+
+# Inverting
+
+@r = (Range->new(1, 2),
+      Range->new(3, 5),
+      Range->new(5, 7));
+
+my $rl = Range->new(0, 10)->invert_list(@r);
+ok($rl, "Can invert list");
+SKIP: {
+    skip "undef from invert list", 4 unless $rl;
+    is(scalar @$rl, 3, "Right number of inverted elements");
+    ok($rl->[0]->equals(Range->new(0, 1)), "first inverted ok");
+    ok($rl->[1]->equals(Range->new(2, 3)), "second inverted ok");
+    ok($rl->[2]->equals(Range->new(7, 10)), "third inverted ok");
+}
+
+$rl = Range->new(1, 10)->invert_list(@r);
+ok($rl, "Can invert list");
+SKIP: {
+    skip "undef from invert list", 3 unless $rl;
+    is(scalar @$rl, 2, "Right number of inverted elements");
+    ok($rl->[0]->equals(Range->new(2, 3)), "first inverted ok");
+    ok($rl->[1]->equals(Range->new(7, 10)), "second inverted ok");
+}
+
+$rl = Range->new(1, 7)->invert_list(@r);
+ok($rl, "Can invert list");
+SKIP: {
+    skip "undef from invert list", 2 unless $rl;
+    is(scalar @$rl, 1, "Right number of inverted elements");
+    ok($rl->[0]->equals(Range->new(2, 3)), "first inverted ok");
+}
+
+@r = (Range->new(1, 2));
+$rl = Range->new(0, 3)->invert_list(@r);
+ok($rl, "Can invert list");
+SKIP : {
+    skip "undef from invert list", 3 unless $rl;
+    is(scalar @$rl, 2, "Right number of inverted elements");
+    ok($rl->[0]->equals(Range->new(0, 1)), "inverted ok");
+    ok($rl->[1]->equals(Range->new(2, 3)), "inverted ok");
+}
+
+$rl = Range->new(1, 2)->invert_list(@r);
+ok($rl, "Can invert list");
+SKIP : {
+    skip "undef from invert list", 1 unless $rl;
+    is(scalar @$rl, 0, "Right number of inverted elements");
+}
+
+$rl = Range->new(1, 3)->invert_list(@r);
+ok($rl, "Can invert list");
+SKIP : {
+    skip "undef from invert list", 2 unless $rl;
+    is(scalar @$rl, 1, "Right number of inverted elements");
+    ok($rl->[0]->equals(Range->new(2, 3)), "inverted ok");
+}

@@ -1,7 +1,10 @@
 #!/usr/bin/perl
+#
+# (c) John Berthels 2005 <jjberthels@gmail.com>. See COPYING for license.
+#
 use strict;
 use warnings;
-use Test::More tests => 152;
+use Test::More tests => 71;
 use_ok('Elf');
 
 my %TESTDAT = (
@@ -90,15 +93,21 @@ foreach my $f (keys %TESTDAT) {
     ok($segments[1]->is_readable, "second is readable");
     ok($segments[1]->is_writable, "second is writable");
     ok(!$segments[1]->is_executable, "second is not executable");
-    
+
+    # Can't run a test-per-section, because the number of sections
+    # varies with the compilation environment (and that throws off the
+    # plan). So check they are all the same and then do one test.
+    my $all_sections_match_ok = 1;
     foreach my $s ($e->sections) {
 	my $readelf_name = shift @readelf_lines;
 	$readelf_name =~ s/\r?\n$//;
 	$readelf_name =~ s/^\s*\[ *\d+\]\s//;
 	$readelf_name =~ s/\s.*$//;
-	is($s->name, $readelf_name,
-	   "section names and order match readelf $readelf_name");
+	$all_sections_match_ok = 0 unless $s->name eq $readelf_name;
+#	is($s->name, $readelf_name,
+#	   "section names and order match readelf $readelf_name");
     }
+    ok($all_sections_match_ok, "section names and order match readelf");
 
     my @symbols = $e->defined_symbols;
     is($td->{num_symbols}, scalar(@symbols), "correct number of symbols");

@@ -1,3 +1,4 @@
+/* (c) John Berthels 2005 <jjberthels@gmail.com>. See COPYING for license */
 #include <stdio.h>
 #include <sys/mman.h>
 #include <sys/types.h>

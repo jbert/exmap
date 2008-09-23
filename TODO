@@ -1,34 +1,24 @@
-DONE - document running as root or as user
-	- as root, you'll get lots of "can't load" warnings.
+- update release date on changes.html
 
-DONE - document filling RH panel
-	- maybe fill in panel for all sections?
+- support earlier kernel versions (no pud_t. See mail from Joaquim)
 
-DONE - try and fix 64-bit hex issues
+- 0.6
+	DONE? - resolve NFS root quash issue
+	DONE? - try and fix lockup bug
+	Not yet :-( - possibly try on FC4
+	- update doc
+		- update changelog
+		- update TODO list
+	DONE - add GPL
 
-DONE - document kernel version requirement
-	- support lower kernel versions?
+- is there a way to avoid the sysread/seek for each string name in ELF?
+	- maybe read the string table in chunks?
+		- or cache 1 page
 
-- write FAQ
-	- BUGS
-		- hard lock
-		- warnings on busy system
-		- inaccuracties on paging/low-mem system
-		- label with version
-			- include previous verions
-		- [anon] maps include [heap]
-		- 64bit errors
-			- document workaround
-
-- two digit accuracy on kbyte
+- we can have a map to a (deleted) file. We'll fail to open this
+(d'uh). What problem does this cause? Just a "non elf" file?
 
 - update Makefile with 'normal CFLAGS'. Perhaps -fPIC for all?	
-
-- command line tool? (to help reduce mem foorprint)
-
-- build a gnome2 and look for mem hogs :-)
-
-DONE? - have autotest cover .bss being split over two vmas.
 
 - read /proc/k?mem using pfn to show hex contents?
 	- I think /dev/mem is what is wanted.
@@ -48,29 +38,3 @@ private and do it in the caller).
 
 - if we do 'reload', functionality then will need to explicitly break
 proc <-> file <-> vma links since refcounting won't.
-
-BUGS
-====
-
-- "PID 9968 can't find VMA afd37000 at Exmap.pm line 297."
-
-Occassional failure, at startup, probably due to a process doing work
-after we save a snapshot of its maps. Let me know if this happens
-frequently enough to be annoying.
-
-[update: we now read the exmap info sooner after reading the
-/proc/xxx/map info. This reduces (but doesn't eliminate) the window to
-cause this problem.]
-
-
-- Can't open mapfile /proc/18301/maps: No such file or directory at
-Exmap.pm line 224.
-
-Benign. Due to process exit after snapshot?
-
-
-- 'undefined val for mapped_size...'
-
-[not seen since reading exmap info straight after /proc/xxx/maps]
-
-

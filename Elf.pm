@@ -1,3 +1,6 @@
+#
+# (c) John Berthels 2005 <jjberthels@gmail.com>. See COPYING for license.
+#
 use strict;
 use warnings;
 use Range;
@@ -38,18 +41,51 @@ sub new
 	warn("No file specified");
 	return undef;
     }
-#    print "ELF: $s->{_file}\n";
-    my $fh;
-    unless (open($fh, "< $s->{_file}")) {
-	warn("Can't open file $s->{_file} for reading : $!");
-	return undef;
-    }
-    $s->{_fh} = $fh;
+    return undef unless $s->_open_file;
     return undef unless $s->_load_file_header;
     return undef unless $s->_load_segments;
     return undef unless $s->_load_sections;
     return undef unless $s->_correlate;
     return $s;
+}
+
+use constant ROOT_UID => 0;
+
+sub _open_file
+{
+    my $s = shift;
+
+    # If we're root, we may be unable to read the file unless we
+    # temporarily become its owner (since it may be on an NFS
+    # partition with root_squash). We can revert to our own uid
+    # immediately after the open. Sadly, the perl -r and -R tests will
+    # suggest that it *is* readable, so we'll simply always shift uid
+    # if we are root.
+
+    my $old_euid; # If undef, we haven't shifted uid
+    if ($< == ROOT_UID) {
+	$old_euid = $>;
+	my @statinfo = stat($s->{_file});
+	# Change uid to file owner
+	$! = 0;
+	$> = $statinfo[4];
+	warn("Failed to change userid to $statinfo[4] : $!") if $!;
+    }
+
+    my $fh;
+    unless(open($fh, "< $s->{_file}")) {
+	warn("Can't open file $s->{_file} for reading : $!");
+	$fh = undef;
+    }
+
+    if (defined $old_euid) {
+	$! = 0;
+	$> = $old_euid;
+	warn("Failed to revert userid to $old_euid : $!") if $!;
+    }
+
+    $s->{_fh} = $fh if $fh;
+    return defined $fh;
 }
 
 sub DESTROY

@@ -1,4 +1,7 @@
 #!/usr/bin/perl -w
+#
+# (c) John Berthels 2005 <jjberthels@gmail.com>. See COPYING for license.
+#
 use strict;
 use Exmap;
 use Gtk2;
@@ -167,17 +170,19 @@ sub make_bottombar
     my $bottombar = Gtk2::HBox->new;
 
     my @procs = $exmap->procs;
-    my $total_effective = 0;
-    my $total_mapped = 0;
+    my $totals = Exmap::Sizes->new;
+    $totals->scale_mbytes;
     foreach my $proc (@procs) {
-	$total_effective += $proc->effective_size;
-	$total_mapped += $proc->mapped_size;
+	my $sizes = $proc->sizes;
+	$totals->add($sizes);
     }
-    my $text = sprintf ("Number of Procs: %d Number of Files: %d Total Mapped: %d Kbytes Total Effective: %d Kbytes",
+    my $text = sprintf ("Number of Procs: %d Number of Files: %d\n",
 			scalar @procs,
-			scalar($exmap->files),
-			$total_mapped / 1024,
-			$total_effective / 1024);
+			scalar($exmap->files));
+
+    $text .= join( "|", map {
+	$totals->key_name($_) . " " . $totals->sval($_);
+    } $totals->keys);
 
     $bottombar->pack_start(Gtk2::Label->new($text), 0, 0, 0);
 
@@ -269,18 +274,23 @@ sub _init_windows
 	$s->_register_hidden_column;
 	$ONCE = 1;
     }
-    
-    my $listwin = Gtk2::SimpleList->new($s->_columns);
+
+    my @cols = $s->_columns;
+    my $start_sort_col = (scalar @cols) / 2;
+    my $sizes = Exmap::Sizes->new;
+    $sizes->scale_kbytes;
+    push @cols,
+	map { $_ => 'text' } $sizes->key_names;
+	
+    my $listwin = Gtk2::SimpleList->new(@cols);
     $s->list_window($listwin);
     $s->_make_all_sortable;
-    my $ssc = $s->_start_sort_col;
-    if (defined $ssc) {
-	my $model = $s->list_window->get_model;
-	$model->set_sort_column_id($ssc, 'descending');
-    }
+    $s->_set_all_col_sortfunc;
+
+    my $model = $s->list_window->get_model;
+    $model->set_sort_column_id($start_sort_col, 'descending');
+
     $s->_make_all_resizable;
-    # Can't make it work :-(
-#    $s->_add_tooltips;
 
     my $scr_list = Gtk2::ScrolledWindow->new;
     $scr_list->set_policy('automatic', 'automatic');
@@ -298,11 +308,6 @@ sub _init_windows
     return 1;
 }
 
-sub _start_sort_col
-{
-    return undef;
-}
-
 sub _frame_name
 {
     return undef;
@@ -318,7 +323,6 @@ sub _register_hidden_column
 }
 
 sub _columns { die "_columns called in listview" };
-sub _tooltips { return (); }
 
 sub list_window
 {
@@ -328,6 +332,39 @@ sub list_window
 	$s->{_list_window} = $win;
     }
     return $s->{_list_window};
+}
+
+sub _set_all_col_sortfunc
+{
+    my $s = shift;
+
+    # Do a numeric sort on all numeric strings, and string sort on others
+    my $sort_func = sub {
+	my $model = shift;
+	my $a = shift;
+	my $b = shift;
+	my $colid = shift;
+	$a = lc $model->get_value($a, $colid);
+	$b = lc $model->get_value($b, $colid);
+	
+	return 0 if (!defined $a) && (!defined $b);
+	return +1 if not defined $a;
+	return -1 if not defined $b;
+
+        if ($a =~ /^[\d\.]+$/ && $b =~ /^[\d\.]+$/) {
+	    $a <=> $b;
+	}
+	else {
+	    $a cmp $b;
+	}
+    };
+
+    return $s->_foreach_column( sub {
+        my $s = shift;
+	my $colid = shift;
+	my $col = shift;
+	$s->list_window->get_model->set_sort_func($colid, $sort_func, $colid);
+    });
 }
 
 sub _make_all_sortable
@@ -352,32 +389,6 @@ sub _make_all_resizable
     });
 }
 
-# sub _add_tooltips
-# {
-#     my $s = shift;
-
-#     my @tiptext = $s->_tooltips;
-#     return 1 unless @tiptext;
-
-#     $s->{_tooltips} = Gtk2::Tooltips->new;
-#     return $s->_foreach_column( sub {
-#         my $s = shift;
-# 	my $colid = shift;
-# 	my $col = shift;
-# 	my $text = shift @tiptext;
-# 	unless ($text) {
-# 	    warn("Wrong number of tooltips in class " . ref $s);
-# 	    return undef;
-# 	}
-# 	$s->list_window->get_column($colid)->set_widget(undef);
-# 	my $widget = $s->list_window->get_column($colid)->get_widget;
-# 	print "widget is ", (defined $widget ? "" : "not "), " defined\n";
-# 	$s->{_tooltips}->set_tip($widget, $text);
-# 	print "set tt to $text\n";
-#     });
-#     $s->{_tooltips}->enable;
-# }
-
 sub _foreach_column
 {
     my $s = shift;
@@ -399,32 +410,10 @@ sub _foreach_column
 package ProcList;
 use base qw/ListView/;
 
-use constant BYTES_PER_KBYTE => 1024;
-
 sub _columns
 {
     return (PID => 'int',
-	    Cmdline => 'text',
-	    'Size (K)' => 'double',
-	    'Mapped (K)' => 'double',
-	    'Effective (K)' => 'double',
-	   );
-}
-
-sub _start_sort_col
-{
-    return 4;
-}
-
-# Per-column tooltip text, in order. Needs to be kept in sync with _columns
-sub _tooltips
-{
-    return ("Process ID",
-	    "Exuctable name",
-	    "Total virtual memory size for process",
-	    "Total physical memory in use by process (includes shared)",
-	    "Total Physical memory usage, with shared usage split fairly amongst all users",
-	    );
+	    Cmdline => 'text');
 }
 
 sub update_view
@@ -432,37 +421,28 @@ sub update_view
     my $s = shift;
     my $lw = $s->list_window;
 
-    @{$lw->{data}} = map {
-	[
-	 $_->pid,
-	 $_->cmdline,
-	 $_->vm_size / BYTES_PER_KBYTE,
-	 $_->mapped_size / BYTES_PER_KBYTE,
-	 $_->effective_size  / BYTES_PER_KBYTE,
-	]
-    } @{$s->{_data}};
+    my @data;
+    foreach my $proc (@{$s->{_data}}) {
+	my $sizes = $proc->sizes;
+	$sizes->scale_kbytes;
+	push @data, [ $proc->pid,
+		      $proc->cmdline,
+		      $sizes->all_svals,
+		      ];
+    }
+    @{$lw->{data}} = @data;
     return 1;
 }
 
 # ------------------------------------------------------------
 package FileList;
 use base qw/ListView/;
-use constant BYTES_PER_KBYTE => 1024;
-
 
 sub _columns
 {
     return ('File Name' => 'text',
 	    'Num Procs' => 'int',
-	    'Size (K)' => 'double',
-	    'Mapped (K)' => 'double',
-	    'Effective (K)' => 'double',
 	   );
-}
-
-sub _start_sort_col
-{
-    return 4;
 }
 
 sub update_view
@@ -470,15 +450,17 @@ sub update_view
     my $s = shift;
     my $lw = $s->list_window;
 
-    @{$lw->{data}} = map {
-	[
-	 $_->name,
-	 scalar($_->procs),
-	 $_->vm_size / BYTES_PER_KBYTE,
-	 $_->mapped_size / BYTES_PER_KBYTE,
-	 $_->effective_size  / BYTES_PER_KBYTE,
-	]
-    } @{$s->{_data}};
+    my @data;
+    foreach my $file (@{$s->{_data}}) {
+	my $sizes = $file->sizes;
+	$sizes->scale_kbytes;
+	push @data, [ $file->name,
+		      scalar($file->procs),
+		      $sizes->all_svals,
+		      ];
+    }
+    @{$lw->{data}} = @data;
+
     return 1;
 }
 
@@ -486,7 +468,6 @@ sub update_view
 # ------------------------------------------------------------
 package PerProcFileList;
 use base qw/ListView/;
-use constant BYTES_PER_KBYTE => 1024;
 
 sub _frame_name
 {
@@ -496,15 +477,7 @@ sub _frame_name
 sub _columns
 {
     return ('File Name' => 'text',
-	    'Size (K)' => 'double',
-	    'Mapped (K)' => 'double',
-	    'Effective (K)' => 'double',
 	   );
-}
-
-sub _start_sort_col
-{
-    return 3;
 }
 
 sub update_view
@@ -517,15 +490,18 @@ sub update_view
 	@{$lw->{data}} = (["No process selected"]);
 	return;
     }
-    
-    @{$lw->{data}} = map {
-	[
-	 $_->name,
-	 $proc->vm_size($_) / BYTES_PER_KBYTE,
-	 $proc->mapped_size($_) / BYTES_PER_KBYTE,
-	 $proc->effective_size($_)  / BYTES_PER_KBYTE,
-	]
-    } $proc->files;
+
+    my @data;
+    foreach my $file ($proc->files) {
+	my $sizes = $proc->sizes($file);
+	$sizes->scale_kbytes;
+	push @data, [
+		     $file->name,
+		     $sizes->all_svals,
+		     ];
+    }
+    @{$lw->{data}} = @data;
+
     return 1;
 }
 
@@ -534,7 +510,6 @@ sub update_view
 package PerFileProcList;
 use base qw/ListView/;
 
-use constant BYTES_PER_KBYTE => 1024;
 
 sub _frame_name
 {
@@ -545,15 +520,7 @@ sub _columns
 {
     return (PID => 'int',
 	    Cmdline => 'text',
-	    'Size (K)' => 'double',
-	    'Mapped (K)' => 'double',
-	    'Effective (K)' => 'double',
 	   );
-}
-
-sub _start_sort_col
-{
-    return 4;
 }
 
 sub update_view
@@ -566,17 +533,19 @@ sub update_view
 	@{$lw->{data}} = ([0, "No file selected"]);
 	return;
     }
-    my @procs = $file->procs;;
 
-    @{$lw->{data}} = map {
-	[
-	 $_->pid,
-	 $_->cmdline,
-	 $_->vm_size($file) / BYTES_PER_KBYTE,
-	 $_->mapped_size($file) / BYTES_PER_KBYTE,
-	 $_->effective_size($file)  / BYTES_PER_KBYTE,
-	]
-    } @procs;
+    my @data;
+    foreach my $proc ($file->procs) {
+	my $sizes = $proc->sizes($file);
+	$sizes->scale_kbytes;
+	push @data, [
+		     $proc->pid,
+		     $proc->cmdline,
+		     $sizes->all_svals,
+		     ];
+    }
+
+    @{$lw->{data}} = @data;
     return 1;
 }
 
@@ -593,15 +562,7 @@ sub _columns
 {
     return ('Name' => 'text',
 	    'File Offset' => 'text',
-	    'Size' => 'int',
-	    'Mapped Size' => 'int',
-	    'Effective Size' => 'int',
 	   );
-}
-
-sub _start_sort_col
-{
-    return 4;
 }
 
 sub file
@@ -631,16 +592,18 @@ sub update_view
 	@{$lw->{data}} = ([$file->name . " is not an ELF file"]);
 	return 1;
     }
-    
-    @{$lw->{data}} = map {
-	[
-	 $_->name,
-	 $_->is_nobits ? "absent" : $_->offset,
-	 $_->size,
-	 $proc->mapped_size($file, $_->mem_range),
-	 $proc->effective_size($file, $_->mem_range),
-	]
-    } $file->elf->mappable_sections;
+
+    my @data;
+    foreach my $section ($file->elf->mappable_sections) {
+	my $sizes = $proc->sizes($file, $section->mem_range);
+	$sizes->scale_kbytes;
+	push @data, [$section->name,
+		     $section->is_nobits ? "absent" : $section->offset,
+		     $sizes->all_svals,
+		    ];
+    }
+    @{$lw->{data}} = @data;
+
     return 1;
 }
 
@@ -648,7 +611,6 @@ sub update_view
 # ------------------------------------------------------------
 package ElfSectionView;
 use base qw/ListView/;
-use constant BYTES_PER_KBYTE => 1024;
 use constant PAGE_SIZE => 4096;
 
 sub _frame_name
@@ -659,15 +621,7 @@ sub _frame_name
 sub _columns
 {
     return ('Symbol Name' => 'text',
-	    'Size' => 'int',
-	    'Mapped Size' => 'int',
-	    'Effective Size' => 'int',
 	   );
-}
-
-sub _start_sort_col
-{
-    return 3;
 }
 
 sub register_section_list
@@ -737,14 +691,17 @@ sub update_view
 	@{$lw->{data}} = (["No symbols found in $section_name in " . $file->name]);
 	return 1;
     }
-    
-    @{$lw->{data}} = map {
-	[ $_->name,
-	  $_->size,
-	  $proc->mapped_size($file, $_->range),
-	  $proc->effective_size($file, $_->range),
-	  ]
-    } @symbols;
+
+    my @data;
+    foreach my $sym (@symbols) {
+	my $sizes = $proc->sizes($file, $sym->range);
+	push @data, [
+		     $sym->name,
+		     $sym->size,
+		     $sizes->all_svals,
+		     ];
+    }
+    @{$lw->{data}} = @data;
 
     return 1;
 }

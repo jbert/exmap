@@ -1,7 +1,28 @@
 /*
  * Dump info on all pages in all VMAs for a given PID.
  *
- * Copyright (c) John Berthels 2005 <jjberthels@gmail.com>
+ * (c) John Berthels 2005 <jjberthels@gmail.com>. See COPYING for license *
+ */
+
+/*
+ * Locking:
+ * We need to ensure the mm_struct doesn't go away beneath us:
+ * inc mm->mm_count/mmdrop()
+ *
+ * We can't vmalloc whilst holding mm->page_table_lock (otherwise
+ * page_check_address() can deadlock against us).
+ *
+ * We have to hold mm->mmap_sem with read bias (to avoid the vmas changing)
+ *
+ * So we:
+ * inc mm_count
+ * down_read(mm->mmap_sem)
+ * walk vmas, allocating space to hold per-page info
+ * take page-table-lock
+ * walk vmas, walking page tables within vma, filling in alloc'd space
+ * release page_table_lock
+ * release mmap_sem
+ * mmdrop()
  */
 
 #include <linux/module.h>
@@ -12,6 +33,8 @@
 #include <linux/pagemap.h>
 #include <linux/version.h>
 #include <linux/vmalloc.h>
+#include <linux/swap.h>
+#include <linux/swapops.h>
 
 #define PROCFS_NAME "exmap"
 MODULE_LICENSE ("GPL");
@@ -23,8 +46,14 @@ struct exmap_page_info
 	/* We return this as a cookie to allow the same page to be
 	 * identified */
 	unsigned long pfn;
-	unsigned int mapcount;
+	swp_entry_t swap_entry;
 };
+
+static void clear_page_info(struct exmap_page_info *page_info)
+{
+	page_info->pfn = 0;
+	page_info->swap_entry.val = 0UL; /* All zeros is not a valid entry */
+}
 
 /* Not very nice. We save the data at write() time and then use it at read().
  * We also keep a cursor so that sequential reads work correctly.
@@ -80,8 +109,9 @@ static void clear_local_data(void)
 	init_local_data();
 }
 
-/* Simplified (i.e. broken) version of __follow_page, which ignores
- * huge pages and doesn't do a mark_accessed() */
+/* Modelled on __follow_page. Except we don't support HUGETLB and we
+ * only actually use the pfn or pte, rather than getting hold of the
+ * struct page. */
 static int walk_page_tables(struct mm_struct *mm,
 			    unsigned long address,
 			    struct exmap_page_info *page_info)
@@ -91,10 +121,8 @@ static int walk_page_tables(struct mm_struct *mm,
 	pmd_t *pmd;
 	pte_t *ptep, pte;
 	unsigned long pfn;
-	struct page *page;
 
-	page_info->pfn = 0;
-	page_info->mapcount = 0;
+	clear_page_info(page_info);
 	
 	// No support for HUGETLB as yet
 	//page = follow_huge_addr(mm, address, write);
@@ -118,25 +146,27 @@ static int walk_page_tables(struct mm_struct *mm,
 		goto out;
 
 	pte = *ptep;
+	pte_unmap(ptep);
 
 	if (pte_present(pte)) {
 		pfn = pte_pfn(pte);
 		if (pfn_valid(pfn)) {
 			page_info->pfn = pfn;
-			page = pfn_to_page(pfn);
-			page_info->mapcount = page_mapcount(page);
 		}
 	}
+	else {
+		/* We use the swp_entry as a cookie. */
+		page_info->swap_entry = pte_to_swp_entry(pte);
+	}
 	
-	pte_unmap(ptep);
 
 	return 0;
 out:
-return -1;
+	return -1;
 }
 
 
-static int save_vma_page_info(struct vm_area_struct *vma,
+static void save_vma_page_info(struct vm_area_struct *vma,
 			      struct exmap_vma_data *vma_data)
 {
 	int pageno;
@@ -150,45 +180,13 @@ static int save_vma_page_info(struct vm_area_struct *vma,
 		if (walk_page_tables(vma->vm_mm,
 				     page_addr,
 				     page_info) < 0) {
-			page_info->mapcount = 0;
-			page_info->pfn = 0;
+			clear_page_info(page_info);
 		}
 	}
-
-	return 0;
 }
 
 
-static int store_vma_info(struct vm_area_struct *vma,
-			  struct exmap_vma_data *vma_data)
-{
-	unsigned long alloc_size;
-	int errcode = 0;
-
-	vma_data->page_cursor = 0;
-	vma_data->num_pages = (vma->vm_end - vma->vm_start) >> PAGE_SHIFT;
-	vma_data->vm_start = vma->vm_start;
-	vma_data->start_shown = 0;
-
-	alloc_size = sizeof(struct exmap_page_info) * vma_data->num_pages;
-	vma_data->page_info = vmalloc(alloc_size);
-	if (vma_data->page_info == NULL) {
-		printk (KERN_ALERT "/proc/%s : vmalloc(%lu) failed\n",
-			PROCFS_NAME, alloc_size);
-		errcode = -ENOMEM;
-		goto ErrExit;
-	}
-
-	return save_vma_page_info(vma, vma_data);
-ErrExit:
-	if (vma_data->page_info != NULL) {
-		vfree(vma_data->page_info);
-		vma_data->page_info = NULL;
-	}
-	return errcode;
-}
-
-static int store_vmalist_info(struct vm_area_struct *vma_base)
+static int alloc_vmalist_info(struct vm_area_struct *vma_base)
 {
 	struct vm_area_struct *vma;
 	struct exmap_vma_data *vma_data;
@@ -202,6 +200,7 @@ static int store_vmalist_info(struct vm_area_struct *vma_base)
 		++local_data.num_vmas;
 	}
 
+	/* Allocate one struct per vma */
 	alloc_size = sizeof(struct exmap_vma_data) * local_data.num_vmas;
 	local_data.vma_data = vmalloc(alloc_size);
 	if (local_data.vma_data == NULL) {
@@ -210,19 +209,31 @@ static int store_vmalist_info(struct vm_area_struct *vma_base)
 		errcode = -ENOMEM;
 		goto ErrExit;
 	}
+
+	/* For each vma_data struct, calculate the number of pages
+	 * and allocate page_info space */
 	for (vma = vma_base, vma_data = local_data.vma_data;
 	     vma != NULL;
 	     vma = vma->vm_next, vma_data++) {
-		if ((errcode = store_vma_info(vma, vma_data)) < 0) {
-			printk (KERN_ALERT "/proc/%s : failed to store vma",
-				PROCFS_NAME);
+		
+		vma_data->num_pages
+			= (vma->vm_end - vma->vm_start) >> PAGE_SHIFT;
+		alloc_size =
+			sizeof(struct exmap_page_info) * vma_data->num_pages;
+		vma_data->page_info = vmalloc(alloc_size);
+		if (vma_data->page_info == NULL) {
+			printk (KERN_ALERT "/proc/%s : vma vmalloc(%lu) failed",
+				PROCFS_NAME, alloc_size);
 			errcode = -ENOMEM;
 			goto ErrExit;
 		}
+
+		vma_data->page_cursor = 0;
+		vma_data->vm_start = vma->vm_start;
+		vma_data->start_shown = 0;
 	}
 
 	return 0;
-	
 ErrExit:
 	if (local_data.vma_data != NULL) {
 		clear_local_data();
@@ -230,7 +241,23 @@ ErrExit:
 	return errcode;
 }
 
-	
+
+
+static void store_vmalist_info(struct vm_area_struct *vma_base)
+{
+	struct vm_area_struct *vma;
+	struct exmap_vma_data *vma_data;
+
+	/* For each vma_data struct, calculate the number of pages
+	 * and allocate page_info space */
+	for (vma = vma_base, vma_data = local_data.vma_data;
+	     vma != NULL;
+	     vma = vma->vm_next, vma_data++) {
+		save_vma_page_info(vma, vma_data);
+	}
+}
+
+
 
 /* Copied (and modded) from user_atoi in arch/frv somewhere */
 static unsigned long user_atoul (const char __user * ubuf, size_t len)
@@ -267,12 +294,12 @@ static int show_one_page(struct exmap_page_info *page_info,
 			  int buflen)
 {
 	int len;
-	
+
 	len = snprintf (buffer,
 			buflen,
-			"0x%08lx %d\n",
+			"0x%08lx 0x%08lx\n",
 			page_info->pfn,
-			page_info->mapcount);
+			page_info->swap_entry.val);
 
 	if (len >= buflen)
 		goto ETOOLONG;
@@ -357,11 +384,19 @@ int setup_from_pid(pid_t pid)
 	struct mm_struct *mm = NULL;
 	struct task_struct *tsk;
 	int errcode = -EINVAL;
+	/* is volatile sufficient, or do we need memory barriers? */
+	volatile int have_spinlock = 0;
 
 	tsk = find_task_by_pid(pid);
 	if (tsk == NULL) {
 		printk (KERN_ALERT
 			"/proc/%s: can't find task for pid %d\n",
+			PROCFS_NAME, pid);
+		goto Exit;
+	}
+	if (tsk == current) {
+		printk (KERN_ALERT
+			"/proc/%s: can't self-examine %d\n",
 			PROCFS_NAME, pid);
 		goto Exit;
 	}
@@ -373,27 +408,27 @@ int setup_from_pid(pid_t pid)
 			PROCFS_NAME, pid);
 		goto Exit;
 	}
-	down_read(&mm->mmap_sem);
-	spin_lock(&mm->page_table_lock);
 
-	if ((errcode = store_vmalist_info(mm->mmap)) < 0) {
+	/* Stop the vma list changing.
+	 * We can't take page_table_lock yet because we vmalloc */
+	down_read(&mm->mmap_sem);
+	if ((errcode = alloc_vmalist_info(mm->mmap)) < 0) {
 		printk (KERN_ALERT
-			"/proc/%s: failed to store from mm for pid %d\n",
+			"/proc/%s: failed to alloc for mm for pid %d\n",
 			PROCFS_NAME, pid);
 		goto Exit;
 	}
+
+	/* We've got our space allocated, fill it in */
+	spin_lock(&mm->page_table_lock);
+	store_vmalist_info(mm->mmap);
+	spin_unlock(&mm->page_table_lock);
+
 	errcode = 0;
-	
 Exit:
-	/* always release the mm (and page table lock) if we have
-	 * acquired them
-	 */
 	if (mm) {
-		spin_unlock(&mm->page_table_lock);
 		up_read(&mm->mmap_sem);
-	}
-	if (mm != NULL) {
-	     mmput(mm);
+		mmput(mm);
 	}
 	
 	return errcode;

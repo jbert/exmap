@@ -1,5 +1,7 @@
 /*
  * Shared lib to test different access patterns and sharing
+ *
+ * (c) John Berthels 2005 <jjberthels@gmail.com>. See COPYING for license
  */
 #include "sharedarray.h"
 #include <stdio.h>

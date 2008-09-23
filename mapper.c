@@ -1,3 +1,4 @@
+/* (c) John Berthels 2005 <jjberthels@gmail.com>. See COPYING for license */
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/wait.h>
