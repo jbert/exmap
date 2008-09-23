@@ -1,0 +1,23 @@
+Which of these would be most useful?
+
+- show mapped files for selected process
+
+- add 'view usage info for a shared lib in a single process'
+
+- For ELF files, collate the multiple VMAs for a single elf files into
+one, correctly accounting for .text, .data and .bss (if present).
+
+- Find a way to identify glibc [anon] maps as heap
+
+- Provide per-symbol usage for unstripped ELF files
+
+- more and better tests
+
+BUGS
+====
+
+- "PID 9968 can't find VMA afd37000 at Exmap.pm line 297."
+
+Occassional failure, at startup, probably due to a process doing work
+after we save a snapshot of its maps. Let me know if this happens
+frequently enough to be annoying.

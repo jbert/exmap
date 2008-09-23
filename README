@@ -1,0 +1,72 @@
+Exmap
+=====
+
+Description
+-----------
+
+Exmap is a tool to allow the real memory usage of a collection of
+processes to be examined. A linux kernel loadable module is used to
+export information to userspace, which is examined perl/gtk
+application to build a picture of how pages are shared amongst
+processes and their shared libraries.
+
+For each process and for each mapped file, the following information
+is provided:
+
+1) Size
+
+This is the overall VM size of the entity, i.e. its virtual address
+space. This isn't directly relevant to how much of your memory it is
+using. For processes, this should be the same as the 'VIRT' column in
+the output of "top".
+
+2) Mapped Size
+
+This is a more interesting figure. This is the total of all the pages
+which are mapped by that process. To be precise, it is the total of
+all pages for which the kernel can successfully find a valid 'pfn',
+via page-table walking and pte_pfn().
+
+3) Effective Size
+
+This figure is an adjusted version of 'mapped size'. Each pages'
+contribution to the size is divided by the number of processes *WHICH
+WE HAVE SCANNED* which map this page. i.e. the cost of a page is
+shared amongst all the processes which use it.
+
+Running exmap.pl as root should give correct values for this
+figure. Whilst in general you should be wary of running anything as
+root, bear in mind that to use exmap.pl at all, you are installing a
+kernel module which implies you're trusting this code at
+root-equivalent privs anyway.
+
+
+Using
+-----
+
+Typing 'make clean && make' should rebuild the exmap.ko kernel
+module. If not, you may need to install the appropriate packages to
+build kernel modules. On ubuntu, this is the 'linux-headers' package
+for your kernel.
+
+Once you've built the 'exmap.ko', you can make use of it with:
+
+"sudo insmod ./exmap.ko"
+
+after which is should show up in "lsmod | grep exmap".
+
+You can then run the UI with 'perl exmap.pl', or 'sudo perl exmap.pl'
+to run as root.
+
+You'll need the perl/gtk2 modules installed. On ubuntu, this is
+"libgtk2-perl".
+
+
+Notes
+-----
+
+- The values for mapped files are summed over all processes mapping the file.
+
+- The ELF files are currently work-in-progress, but should provide
+per-symbol usage information (for large enough symbols, we only have
+page-level (4096 bytes) granularity).
