@@ -1,21 +1,23 @@
 Exmap
 =====
 
-Exmap is a tool to allow the real memory usage of a collection of
+Exmap is a tool which allows the real memory usage of a collection of
 processes to be examined. A linux kernel loadable module is used to
-export information to userspace, which is examined by a perl/gtk
+export information to userspace, which is examined by a gtk
 application to build a picture of how pages are shared amongst
 processes and their shared libraries.
 
 Section-level information is exposed for ELF files and symbol-level
 information is exposed for unstripped ELF files.
 
-NOTE: As of today (22/11/2005) exmap still contains a bug which can
-lock your machine hard, without giving you a chance to save work or
-shutdown cleanly. Please don't use on a production server or on a
-desktop system which contains unsaved and unsync'd work.
+To use:
 
-See http://www.berthels.co.uk/exmap for documentation and a FAQ.
+1 - 'make' at toplevel to build
+2 - 'sudo insmod kernel/exmap.ko' to load the kernel module
+2a(optional) - 'make test' at toplevel to check all is OK
+3 - './src/gexmap' to run
+
+See http://www.berthels.co.uk/exmap for more documentation and a FAQ.
 
 
 If you use exmap, I'd appreciate an email to help gauge the level of

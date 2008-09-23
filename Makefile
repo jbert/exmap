@@ -1,35 +1,22 @@
-# Kernel modules
-obj-m += exmap.o
-obj-m += swapout.o
-# These flags are for the kernel module(s) only
-#EXTRA_CFLAGS=-g -O0
-DOC=exmap.html Exmap.html
 
-all: kernel_modules userspace doc
+# There's probably a better way of doing this (apart from automake),
+# would anyone care to enlighten me?
 
-doc: $(DOC)
+# Note this is the build order, and reflects inter-subdir
+# dependencies.
+SUBDIRS=kernel jutil src tools
 
-kernel_modules:
-	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
+.PHONY: build clean test $(SUBDIRS)
 
-userspace:
-	make -f Makefile.user
+DOSUBDIRS=for dir in $(SUBDIRS); do \
+		$(MAKE) -C $$dir $@; \
+	done
 
-test:
-	make -f Makefile.user test
+build: $(SUBDIRS)
+	$(DOSUBDIRS)
 
-# Tell make to recognise these suffices in the following implicit rule
-.SUFFIXES: .html .pl .pm
+clean: $(SUBDIRS)
+	$(DOSUBDIRS)
 
-# How to make html docs from perl files.
-.pl.html:
-	pod2html --infile $< --outfile $@
-
-.pm.html:
-	pod2html --infile $< --outfile $@
-
-
-clean:
-	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
-	make -f Makefile.user clean
-	rm -f $(DOC) pod2htm*
+test: build
+	make -C src test

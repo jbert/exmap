@@ -1,33 +1,43 @@
-- use binary exmap output for speed?
+For 0.9
+=======
 
-- lose the 'first_cols'/sizes distinction?
+- support 64bit (Elf!)
+  - #define at compile time?
+  - template!?
+  - remove Elf_ types from Elf::* methods
+
+- command line tool
+  - list procs/files with summary
+  - specify proc/file and get basic info
+  - specify proc/file and list files/procs
+  - specify proc+file and list ELF info?
+
+- consider handling totals differently
+  - best would be something outside of the file/proc tab.
+  - a single text string on the bottombar looks ugly
+    - multiple labels?
+      - too wide
+    - perhaps split over two lines or something?
+  - even if keep totals in proc list, perhaps add to file too?
+
+- somehow test on 64bit
+	- finish sysinfo
+		- merge read_vma and read_page_info so can override
+		them both in test sysinfo
+			- have read /proc/x/maps as protected func
+		- write TestNoModuleLinuxSysInfo
+			- which reads /proc/x/maps and makes up page info
+				- is there a way to make it test-compatible?
+				- or skip those tests if in that mode?
+		- add a switch (on ENV var?) to enable no-module mode
+		for t_exmap
+		- test locally
+		- test on hp testdrive
+
+Sometime
+========
 
 - document non-page-aligned values for files
-
-NO - have computable columns, based on user-specified code.
-	- add UI to control which columns are visible
-
-	- turn '::Sizes' inside out. Instead of accumulated values,
-	with the code in sizes_for_mem_range, we need a 'zero' and
-	'accumulate' method on an abstract 'Size' or 'Measure'
-	class. This object is then passed in and gets the @info poked
-	at it (or better, don't need to put together the infolist at
-	all...that list of hash refs can go. Instead page_cookie and
-	range are args to the size func (which takes flags, gets count
-	and calls the abstract func).
-
-	- Then usercode fits in nicely as a new subclass, using an
-	'eval' subref as the abstract.
-
-- have a sanity check for writable numbers
-	- can we add some unit tests?
-		- perhaps run some 'mapper' progs to get some different
-		mmap() behaviour.
-
-- config file
-	DONE - allow configuration of columns per listview
-	- allow specification of perl subs as column definitions
-	- build listviews dynamically?
 
 - command line tool, with various options on what to report (which
 measures, which items)
@@ -38,14 +48,8 @@ measures, which items)
 - support earlier kernel versions (no pud_t. See mail from Joaquim)
 	- also need to worry about [vdso] name
 
-- is there a way to avoid the sysread/seek for each string name in ELF?
-	- maybe read the string table in chunks?
-		- or cache 1 page
-
 - we can have a map to a (deleted) file. We'll fail to open this
 (d'uh). What problem does this cause? Just a "non elf" file?
-
-DONE - update Makefile with 'normal CFLAGS'. Perhaps -fPIC for all?	
 
 - read /proc/k?mem using pfn to show hex contents?
 	- I think /dev/mem is what is wanted.
@@ -59,9 +63,34 @@ Which of these would be most useful?
 
 - Find a way to identify glibc [anon] maps as heap
 
-- Elf.pm is holding an open fd to each Elf file. We probably need it
-to seek to read symbols, unless we open/close there (or make it
-private and do it in the caller).
+- We are holding an open fd to each Elf file. We probably need it to
+seek to read symbols, unless we open/close there (or make it private
+and do it in the caller).
 
 - if we do 'reload', functionality then will need to explicitly break
-proc <-> file <-> vma links since refcounting won't.
+proc <-> file <-> vma links since the shared_ptr's are refcounting
+won't. (use weak_ptr)
+
+- put together some test data
+	- have a friend class to Snapshot insert some mock objects?
+
+- try and factor out common code between filetab and proctab
+
+- add 'reload'
+	- check for memleaks caused by shared_ptr
+
+- right justify Sizes
+	- use %10.2f as the format
+	- but then need fixed-width font in text renderer
+		- do-able?
+		- perhaps change default font for all of it?
+		- could pad with leading zeros <ugh>
+
+- doxygen
+	- basic doc on all classes
+	- need to mark todo's as \todo
+	DONE - add TODO generation
+	DONE - up and running
+
+
+------------------------------------------------------------

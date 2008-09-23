@@ -1,0 +1,80 @@
+CXX=g++
+LD=g++
+JUTILDIR=../jutil
+CXXFLAGS=`pkg-config --cflags gtkmm-2.4` -g -Wall -Werror -I$(JUTILDIR)
+LDFLAGS=`pkg-config --libs gtkmm-2.4` -lpcre -ljutil -L$(JUTILDIR)
+
+EXMAP_OBJ=Exmap.o Range.o Elf.o
+
+# ------------------------------------------------------------
+
+GEM_OBJ =  gexmap.o $(EXMAP_OBJ)
+OBJS += $(GEM_OBJ)
+EXES += gexmap
+
+CL_OBJ =  exmtool.o $(EXMAP_OBJ)
+OBJS += $(CL_OBJ)
+EXES += exmtool
+
+# ------------------------------------------------------------
+
+TR_OBJ = t_range.o Range.o
+OBJS += $(TR_OBJ)
+TESTS +=  t_range
+
+TE_OBJ = t_elf.o Elf.o Range.o
+OBJS += $(TE_OBJ)
+TESTS +=  t_elf
+
+TP_OBJ = t_pcre.o
+OBJS += $(TP_OBJ)
+TESTS +=  t_pcre
+
+TX_OBJ = t_exmap.o $(EXMAP_OBJ)
+OBJS += $(TX_OBJ)
+TESTS +=  t_exmap
+
+# ------------------------------------------------------------
+
+EXES += $(TESTS)
+
+EXTRA_DEL_FILES += *~
+
+build: $(EXES) $(SHLIBS) TAGS
+
+TAGS:
+	etags *.cpp *.hpp
+
+# Goes into html dir, so always makes
+doc:
+	doxygen
+
+test: $(TESTS) $(EXES) $(SHLIBS)
+	$(JUTILDIR)/trun $(TESTS)
+
+gexmap: $(GEM_OBJ)
+	$(LD) -o gexmap $(GEM_OBJ) $(LDFLAGS) 
+
+exmtool: $(CL_OBJ)
+	$(LD) -o exmtool $(CL_OBJ) $(LDFLAGS) 
+
+t_range: $(TR_OBJ)
+	$(LD) -o t_range $(TR_OBJ) $(LDFLAGS) 
+
+t_elf: $(TE_OBJ)
+	$(LD) -o t_elf $(TE_OBJ) $(LDFLAGS) 
+
+t_pcre: $(TP_OBJ)
+	$(LD) -o t_pcre $(TP_OBJ) $(LDFLAGS) 
+
+t_exmap: $(TX_OBJ)
+	$(LD) -o t_exmap $(TX_OBJ) $(LDFLAGS) 
+
+clean: cleantags cleandoc
+	rm -f $(OBJS) $(EXES) $(SHLIBS) $(EXTRA_DEL_FILES)
+
+cleantags:
+	rm -f TAGS
+
+cleandoc:
+	rm -rf ./html
