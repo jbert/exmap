@@ -1,0 +1,13 @@
+    <!--#include file="header.shtml"-->
+
+    <div class="pagebody">
+      <p>This is the home page for Exmap, a utility which allows you to
+	accurately determine how much physical memory is used by
+	individual processes and shared libraries on a running system.</p>
+      
+      <p>Exmap runs on Linux only, and uses a loadable kernel module
+	to export information on which pages are in use. This is then
+	collated by a perl module and displayed using a perl/GTK UI.</p>
+    </div>
+    <!--#include file="footer.shtml"-->
+    

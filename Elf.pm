@@ -8,11 +8,12 @@ use Range;
 package Elf;
 
 # Static methods and constants
-use constant PAGE_SIZE => 4096;
+use constant PAGE_SIZE_SHIFT => 12;
+use constant PAGE_SIZE => (1 << PAGE_SIZE_SHIFT);
 sub page_align_down
 {
     my $addr = shift;
-    return $addr - ($addr % PAGE_SIZE);
+    return $addr & ~(PAGE_SIZE-1);
 }
 
 sub page_align_up

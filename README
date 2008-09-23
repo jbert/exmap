@@ -13,10 +13,13 @@ processes and their shared libraries.
 Section-level information is exposed for ELF files and symbol-level
 information is exposed for unstripped ELF files.
 
-NOTE: exmap hasn't received widespread testing as yet (4/11/2005) and
+NOTE: exmap hasn't received widespread testing as yet (14/11/2005) and
 I'd be very interested in hearing of any problems you may have. Please
 see the feedback section at the end for my contact details.
 
+There is some documentation in the html/ sub-directory (may require
+server-side-include to read easily). I'm hoping to host these pages
+somewhere soon.
 
 Description
 -----------

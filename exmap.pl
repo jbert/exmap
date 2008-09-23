@@ -13,13 +13,18 @@ exit 0;
 
 sub main
 {
+    my $doquit = shift;
+    
     my $exmap = Exmap->new;
     unless ($exmap) {
 	die("Can't initialise exmap data");
     }
-    $exmap->load
+
+    my $progress = Progress->new;
+    $exmap->load($progress)
 	or die("Can't load exmap process information");
 
+    print "Calculating...\n";
     Gtk2->init;
     my $mw = Gtk2::Window->new("toplevel");
 
@@ -53,6 +58,8 @@ sub main
     $mw->add($vbox);
     $mw->show_all;
 
+    return 0 if $doquit;
+    print "Running\n";
     Gtk2->main;
 }
 
@@ -182,6 +189,34 @@ sub make_bottombar
 }
 
 # ------------------------------------------------------------
+package Progress;
+use base qw/Exmap::Progress/;
+
+sub number_of_ticks
+{
+    my $s = shift;
+    my $nticks = shift;
+    print "Number of procs: $nticks\n";
+    return 1;
+}
+
+sub tick
+{
+    my $s = shift;
+    my $text = shift;
+    print $text, "\n";
+    return 1;
+}
+
+sub finished
+{
+    my $s = shift;
+    print "Finished loading\n";
+    return 1;
+}
+
+
+# ------------------------------------------------------------
 package View;
 
 sub new
@@ -253,10 +288,22 @@ sub _init_windows
 
     $s->window($scr_list);
 
+    my $frame_text = $s->_frame_name;
+    if ($frame_text) {
+	my $frame = Gtk2::Frame->new($frame_text);
+	$frame->add($s->window);
+	$s->window($frame);
+    }
+    
     return 1;
 }
 
 sub _start_sort_col
+{
+    return undef;
+}
+
+sub _frame_name
 {
     return undef;
 }
@@ -441,6 +488,11 @@ package PerProcFileList;
 use base qw/ListView/;
 use constant BYTES_PER_KBYTE => 1024;
 
+sub _frame_name
+{
+    return "Files per process";
+}
+
 sub _columns
 {
     return ('File Name' => 'text',
@@ -458,12 +510,14 @@ sub _start_sort_col
 sub update_view
 {
     my $s = shift;
-
     
     my $lw = $s->list_window;
-
     my $proc = $s->{_data}->[0];
-    return unless $proc;
+    if (!$proc) {
+	@{$lw->{data}} = (["No process selected"]);
+	return;
+    }
+    
     @{$lw->{data}} = map {
 	[
 	 $_->name,
@@ -482,11 +536,15 @@ use base qw/ListView/;
 
 use constant BYTES_PER_KBYTE => 1024;
 
+sub _frame_name
+{
+    return "Processes per file";
+}
+
 sub _columns
 {
     return (PID => 'int',
 	    Cmdline => 'text',
-	    Exe => 'text',
 	    'Size (K)' => 'double',
 	    'Mapped (K)' => 'double',
 	    'Effective (K)' => 'double',
@@ -495,7 +553,7 @@ sub _columns
 
 sub _start_sort_col
 {
-    return 5;
+    return 4;
 }
 
 sub update_view
@@ -504,14 +562,16 @@ sub update_view
     my $lw = $s->list_window;
 
     my $file = $s->{_data}->[0];
-    return unless $file;
+    if (!$file) {
+	@{$lw->{data}} = ([0, "No file selected"]);
+	return;
+    }
     my @procs = $file->procs;;
 
     @{$lw->{data}} = map {
 	[
 	 $_->pid,
 	 $_->cmdline,
-	 $_->exe_name,
 	 $_->vm_size($file) / BYTES_PER_KBYTE,
 	 $_->mapped_size($file) / BYTES_PER_KBYTE,
 	 $_->effective_size($file)  / BYTES_PER_KBYTE,
@@ -524,16 +584,10 @@ sub update_view
 package ElfSectionList;
 use base qw/ListView/;
 
-sub _init_windows
+sub _frame_name
 {
-    my $s = shift;
-    $s->SUPER::_init_windows;
-    my $frame = Gtk2::Frame->new("ELF Sections");
-    $frame->add($s->window);
-    $s->window($frame);
-    return 1;
+    return "ELF Sections";
 }
-
 
 sub _columns
 {
@@ -569,11 +623,15 @@ sub update_view
     my $lw = $s->list_window;
     my $file = $s->file;
     my $proc = $s->proc;
-    unless ($file && $proc && $file->is_elf) {
-	@{$lw->{data}} = ();
+    unless ($file && $proc) {
+	@{$lw->{data}} = (["No file and proc selected"]);
 	return 1;
     }
-
+    unless ($file->is_elf) {
+	@{$lw->{data}} = ([$file->name . " is not an ELF file"]);
+	return 1;
+    }
+    
     @{$lw->{data}} = map {
 	[
 	 $_->name,
@@ -592,6 +650,11 @@ package ElfSectionView;
 use base qw/ListView/;
 use constant BYTES_PER_KBYTE => 1024;
 use constant PAGE_SIZE => 4096;
+
+sub _frame_name
+{
+    return "ELF Symbols";
+}
 
 sub _columns
 {
@@ -654,14 +717,27 @@ sub update_view
     my $proc = $s->proc;
     my $section_name = $s->section_name;
 
-    unless ($file && $proc && $section_name && $file->is_elf) {
-	@{$lw->{data}} = ();
+    unless ($section_name) {
+	@{$lw->{data}} = (["No ELF section selected"]);
+	return 1;
+    }
+    unless ($file && $proc) {
+	@{$lw->{data}} = (["No file and proc selected"]);
+	return 1;
+    }
+    unless ($file->is_elf) {
+	@{$lw->{data}} = ([$file->name . " is not an ELF file"]);
 	return 1;
     }
 
     my $section = $file->elf->section_by_name($section_name);
     my @symbols = $file->elf->symbols_in_section($section);
 
+    unless (@symbols) {
+	@{$lw->{data}} = (["No symbols found in $section_name in " . $file->name]);
+	return 1;
+    }
+    
     @{$lw->{data}} = map {
 	[ $_->name,
 	  $_->size,

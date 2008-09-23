@@ -1,0 +1,168 @@
+    <!--#include file="header.shtml"-->
+    <div class="pagebody">
+
+  <div class="docheader">Introduction</div>
+  <div class="doctext">
+    <p>Exmap is a utility which takes a snapshot of the physical
+    memory in use by all the processes on your system. It examines
+    exactly which chunks of memory (memory is organised into 4k chunks
+    called "pages") are shared between processes, so that it can share
+    the cost of the pages fairly.</p>
+    
+    <p>Some software systems (e.g. the GNOME and KDE desktop
+    environments) consist of dozens of processes, each loading dozens
+    of shared libraries.</p>
+    
+    <p>Modern operating systems, such as Linux, try to reduce physical
+    memory usage with a couple of techniques. Firstly, such libraries are
+    generally "demand paged". This means that only the parts of the
+    library which are actually used by a process get loaded in from
+    disk and mapped into the process address space. Secondly, two
+    different processes which load a shared library will use "copy on
+    write" semantics for the writable parts of the map (e.g. global
+    data). This means that potentially-writable pages are initially
+    shared between processes, but when one process writes to a page it
+    is given its own private copy with that change.</p>
+
+    <p>Together, these two facilities make it very difficult to know
+    how much physical memory is in use by a given map within a process
+    using current userspace-only tools.</p>
+    
+    <p>Hence Exmap includes a loadable kernel module "exmap.ko" which
+    exports information on the actual physical page usage of a
+    process, via a simple interface using an entry in /proc. This
+    information is collated by a process written in perl (exmap.pl)
+    and displayed in a GUI (written with the perl binding to the GTK+
+    toolkit).</p>
+  </div>
+  
+  <div class="docheader">Compilation</div>
+  <div class="doctext">
+    <p>After unpacking the tarball you should do:
+    <pre>
+make
+sudo insmod ./exmap.ko
+make test
+    </pre>
+    and if all goes well you'll get a perl test summary saying no
+    tests have failed.</p>
+
+    <p><b>NOTE:</b> kernel module code effectively runs under root
+    privileges. You should apply the same concerns and cautions as you
+    would with running code from any other source as root. In
+    particular, the exmap.ko module allows any process to read the
+    per-page mapping information of any other process. Whilst I can't
+    envisage a way this might be used as a privilege escalation
+    attack, it is probably not wise to run exmap on a multi-user
+    system where unfriendly users are a possibility.
+    </p>
+
+    <p>Additionally, buggy code in kernel mode can completely lock
+    your machine, so please don't try this with unsaved work in any
+    applications. You may also want to run the command 'sync' before
+    running exmap. I <b>have</b> seen completely locked machines which I
+    can attribute to exmap, so it seems there is a bug here. Use at
+    your own risk!</p>
+    
+    <p>If problems occur, check that your system meet the build and
+    kernel requirements mentioned in the <a href="faq.shtml">FAQ</a>
+    </p>
+  </div>
+
+  <div class="docheader">Running</div>
+  <div class="doctext">
+    <p>You run exmap with the command: <pre>perl exmap.pl</pre> or
+    <pre>sudo perl exmap.pl</pre> to run as root.</p>
+
+    <p>Running as root will provide more accurate numbers, since
+    otherwise only processes readable by the user will be
+    examined. This will throw off the 'effective size' numbers to some
+    extent. Whilst it is a good idea to avoid running applications as
+    root in general, you should note that the kernel module component
+    of exmap effectively runs at a root-equivalent level of privilege
+    within the kernel anyway.</p>
+
+    <p>At startup, exmap will take a snapshot of current memory usage,
+    displaying progress information to stdout, as the data for each
+    process is loaded. It will then seem to pause for a while (an
+    additional 5-10seconds) whilst the sharing information is
+    analysed. Subsequently, the UI will come up.</p>
+  </div>
+
+  <div class="docheader">User Interface</div>
+  <div class="doctext">
+    <p>The main view in exmap has three lists on the left hand side
+    (LHS), and another on the right. On the left, you have
+    'Processes', 'Files per process' and 'ELF Sections'. Initially,
+    only the process list will be populated. If you select a process,
+    the files mapped by that process will be displayed (including
+    "non-files" such as "[heap]", "[anon]", etc).</p>
+
+    <p>If you select a file which is an ELF file (any shared library
+    or executable) you will see a list of ELF sections in the bottom
+    pane on the LHS. Selecting an ELF section will cause information
+    on the symbols within that section to be displayed in the pane on
+    the RHS. Note that most system binaries and libraries do not
+    contain any sumbols (they have been "stripped"), so the RH pane
+    will generally remain blank unless you are examining binaries you
+    have built yourself. Note again, that you don't have to build
+    binaries with the '-g' option to get this per-symbol information,
+    you just need to avoid running the 'strip' command on the binaries
+    you produce.</p>
+
+    <p>Another, file-oriented view is also provided in another
+    tab. This simply reverses the roles of Process and Files in the
+    above description. You first choose a mapped file, obtain a list
+    of processes which map that file and then again choose an ELF
+    section to see the symbols within.</p>
+  </div>
+
+  <div class="docheader">Interpreting the numbers</div>
+  <div class="doctext">
+    <p>In general, all the measured items (processes, files, ELF
+    sections, symbols) are given three sizes: "Size", "Mapped Size"
+    and "Effective Size".</p>
+    <ul>
+      <li>Size - this is the virtual memory size. For a process, this
+      is how much address space it has (how many bytes it could read
+      without causing a segault). This says nothing about how much
+      physical memory the item is occupying, but is one measure of how
+      big it is. For a process, this should correspond to the 'VIRT'
+      column in top. apache2 and x server processes typically have
+      large virtual sizes, without necessarily occupying much physical
+      mem. This measurement doesn't change as processes are swapped in
+      and out.</li>
+      
+      <li>Mapped size - this is the amount of the virtual address
+      space which has been mapped to physical RAM. If there was no
+      shared memory, this would be the physical memory usage of the
+      process. This figure will vary according to how much of the
+      process has been paged in or swapped out. For a process, this
+      should correspond to the 'RES' value in top.
+      </li>
+      
+      <li>Effective size - providing this figure is the purpose of
+      exmap. It can best be thought of as a 'corrected' mapped size
+      figure. Like mapped size, it reflects how much of an item is in
+      memory. However, in addition, it attempts to compensate for
+      memory shared between multiple processes. If a given (4k) page
+      is mapped by N processes, each process will get 4k/N added to
+      its effective size, rather than the 4k which is added to the
+      mapped size.
+	</li>
+      </ul>
+      </div>
+
+
+    <div class="docheader">Feedback</div>
+    <div class="doctext">
+      <p>I'm very interested in hearing from anyone who runs exmap. If
+      you find an aspect of it annoying or useful, <a
+      href="contact.shtml">please let me know</a>. If you have any
+      particular successes with optimising your system, again please
+      let me know.</p>
+      
+  </div>
+
+    </div>
+    <!--#include file="footer.shtml"-->

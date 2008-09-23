@@ -1,0 +1,9 @@
+<div class="footer">
+    <hr>
+    <p>If you have any comments or questions on these pages or Exmap,
+    then <a href="contact.shtml">please let me know</a>.</p>
+    <p>This document was last modified on <!--#echo
+    var="LAST_MODIFIED"--></p>
+</div>
+    </body>
+</html>

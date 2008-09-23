@@ -1,0 +1,116 @@
+    <!--#include file="header.shtml"-->
+    <div class="pagebody">
+      <ol>
+	<li>
+	  <div class="question">What is exmap?</div>
+	  
+	  <div class="answer">
+	    <p>Exmap is a tool which allows you to see how much
+	      physical memory is in use by different process, mapped
+	      file, ELF sections and ELF symbols at a given moment in
+	      time.</p>
+
+	    <p>In particular, an attempt is made to accurately account
+	      for shared memory in the following way; when a page of
+	      physical memory is found to be shared between N processes,
+	      each process is given a 1/N share of that page.</p>
+
+	    <p>Exmap doesn't allow you to see details on how and where
+	      memory on the heap is allocated. Tools such as memprof and
+	      possibly valgrind are more use in this case.</p>
+	  </div>
+	</li>
+	
+	<li>
+	  <div class="question">On which platforms does exmap run?</div>
+	  
+	  <div class="answer">
+	    <p>Exmap is linux-specific, since it uses a linux kernel
+	    loadable module. Additionally, the kernel module requires
+	    a recent kernel (2.6.11 or higher) in order to
+	    successfully compile or run.</p>
+
+	    <p>Exmap has been reported to run successfully on Ubuntu
+	    5.10 (Breezy Badger) and Fedora Core 4.</p>
+
+            <p>Previous versions (0.5.1 and lower) produce warnings on
+            some systems with a 64-bit kernel. More recent versions
+            should work.</p>
+
+	    <p>Please let me know if you have problems running on a
+	    particular platform or can add to the list of known
+	    working platforms above.<p>
+	  </div>
+	</li>
+	
+	<li>
+	  <div class="question">What do I need to build exmap?</div>
+	  
+	  <div class="answer">
+	    <p>You'll need the basic development tools such as gcc,
+	      make etc. Additionally, since part of exmap is a loadable
+	      kernel module, you'll need the kernel headers for your
+	      current kernel installed.</p>
+
+	    <p>On Ubuntu, you can arrange this with:</p>
+
+	    <p><code>sudo apt-get install build-essential
+	      linux-kernel-headers</code></p>
+	  </div>
+	</li>
+	
+	<li>
+	  <div class="question">What do I need to run exmap?</div>
+	  
+	  <div class="answer">
+	    <p>The userspace tool which interprets the data from the
+	      kernel module is written in perl, so you'll need perl
+	      installed. The UI is written using the gtk+ toolkit (which
+	      underlies GNOME) so you'll need both that toolkit and the
+	      perl bindings.
+
+	    <p>On Ubuntu, you can arrange this with:</p>
+
+	    <p><code>sudo apt-get install libgtk2-perl</code></p>
+	  </div>
+	</li>
+
+	<li>
+	  <div class="question">Exmap just hangs on startup, chewing 100% CPU!</div>
+	  
+	  <div class="answer">
+	    <p>Sorry. Taking and analyzing the snapshot can take a
+	      while. On my 2.8Ghz P4 with 512Mbyte, this can take around
+	      16 seconds of 100% CPU. (Down from 30s for release 0.5.1 :-)</p>
+
+	    <p>I'm looking at how to improve this. If this bugs you or
+	      makes it unusable for you, please let me know so I can judge
+	      how important this problem is.</p>
+	  </div>
+	</li>
+
+	<li>
+	  <div class="question">At startup I get lots of warnings like: "Can't load info for pid XXX at Exmap.pm line YYY"</div>
+	  
+	  <div class="answer">
+	    <p>You're probably running Exmap as root. This is probably
+	    fine, the pids should be kernel threads (with names in
+	    square brackets, like [kswapd]. These kernel threads don't
+	    have an associated VM area, so it can't be loaded.</p>
+	    <p>If neither of this is the case, please <a
+	    href="contact.shtml">let me know</a> as its probably a
+	    bug.</p>
+	  </div>
+	</li>
+
+	<li>
+	  <div class="question">How do I use Exmap? What do the numbers mean?</div>
+	  
+	  <div class="answer">
+	    <p>Please take a look at the <a href="doc.shtml">documentation.</a></p>
+	  </div>
+	</li>
+
+      </ol>
+    </div>
+    <!--#include file="footer.shtml"-->

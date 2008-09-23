@@ -1,3 +1,22 @@
+Release 0.5.2: 14/11/2005
+=========================
+
+- add meaningful "not selected" messages to the various lists
+
+- On 64-bit systems, perl warns that converting hex->dec for a value
+greater than 2^32 is non-portable. Provide an env var
+EXMAP_HIDE_HEX_WARN to allow this to be suppressed. What is the 'right
+thing' to do here?
+
+- some performance work. Startup/shutdown down to approx 13.3s from
+24s on my system.
+
+- keep truncate command line to first one or two args (including the
+second only if it begins with a [), to give better KDE behaviour) to
+avoid long cmdline messing UI.
+
+- Some website work, including FAQ.
+	
 Release 0.5.1: 4/11/2005
 ========================
 

@@ -1,22 +1,30 @@
+DONE - document running as root or as user
+	- as root, you'll get lots of "can't load" warnings.
+
+DONE - document filling RH panel
+	- maybe fill in panel for all sections?
+
+DONE - try and fix 64-bit hex issues
+
+DONE - document kernel version requirement
+	- support lower kernel versions?
+
+- write FAQ
+	- BUGS
+		- hard lock
+		- warnings on busy system
+		- inaccuracties on paging/low-mem system
+		- label with version
+			- include previous verions
+		- [anon] maps include [heap]
+		- 64bit errors
+			- document workaround
+
 - two digit accuracy on kbyte
-
-DONE - sort by effective size
-	- reorder to effective first?
-
-DONE - -Wall -Werror
-
-DONE - Most KDE processes are shown as /opt/kde3/bin/kdeinit here, because
-of the kdeinit hack. However with recent kernel versions top shows
-them as e.g. kwrite instead of kdeinit. I'm not quite sure how that's
-done though.
-
-DONE - The UI tool could either default to downwards sorting by effective
-memory or even better save the sorting. I always have to double-click
-the column in all views to have them sorted in the IMHO best way.
 
 - update Makefile with 'normal CFLAGS'. Perhaps -fPIC for all?	
 
-- command line tool (to help reduce mem foorprint)
+- command line tool? (to help reduce mem foorprint)
 
 - build a gnome2 and look for mem hogs :-)
 
@@ -32,13 +40,7 @@ DONE? - have autotest cover .bss being split over two vmas.
 
 Which of these would be most useful?
 
-DONE - show overall Effective. This should add up to total mem in use...
-
 - Find a way to identify glibc [anon] maps as heap
-
-DONE - Provide per-symbol usage for unstripped ELF files
-
-- better documentation (tooltips?) to explain numbers
 
 - Elf.pm is holding an open fd to each Elf file. We probably need it
 to seek to read symbols, unless we open/close there (or make it

@@ -14,13 +14,10 @@ sub new
     bless $s, $c;
     $s->{_start} = shift;
     $s->{_end} = shift;
-    return $s->_sanity_check ? $s : undef;
-}
-
-sub _sanity_check
-{
-    my $s = shift;
-    return (defined $s->start) && (defined $s->end) && ($s->start <= $s->end);
+    return undef unless defined $s->{_start} && defined $s->{_end};
+    $s->{_size} = $s->{_end} - $s->{_start};
+    return undef unless $s->{_size} >= 0;
+    return $s;
 }
 
 sub start { return $_[0]->{_start}; }
@@ -74,7 +71,7 @@ sub subtract
 sub size
 {
     my $s = shift;
-    return $s->end - $s->start;
+    return $s->{_size};
 }
 
 sub contains_range
