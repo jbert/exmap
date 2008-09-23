@@ -15,7 +15,7 @@ public:
 	std::list<std::string> vma_lines;
     };
     ~TestSysInfo();
-    std::list<pid_t> accessible_pids();
+    std::list<pid_t> TestSysInfo::accessible_pids();
     bool sanity_check();
     bool read_page_info(pid_t pid,
 			    std::map<Elf::Address, std::list<Exmap::Page> >&pi);
