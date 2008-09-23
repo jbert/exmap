@@ -6,6 +6,7 @@
 #include "Elf.hpp"
 
 #include <sstream>
+#include <set>
 
 #include <ctype.h>
 #include <sys/types.h>
@@ -87,12 +88,12 @@ bool Snapshot::load()
     }
 
     if (!load_procs(pids)) {
-	warn << "Snapshot::load - failed to load processes\n";
+	warn << "Snapshot::load - failed to load: processe\n";
 	return false;
     }
     
     if (!calculate_file_mappings()) {
-    	warn << "Snapshot::load - failed to load calculate file mappings\n";
+    	warn << "Snapshot::load - failed to load: calculate file mappings\n";
     	return false;
     }
     return true;
@@ -133,8 +134,9 @@ bool Snapshot::calculate_file_mappings()
     list<ProcessPtr> processes = procs();
 
     for (it = processes.begin(); it != processes.end(); ++it) {
-	if (!(*it)->calc_vma_maps(_file_pool)) {
+	if (!(*it)->calculate_maps(_file_pool)) {
 	    warn << "Failed to process maps for pid " << (*it)->pid() << "\n";
+	    return false;
 	}
     }
     return !_file_pool->files().empty();
@@ -146,24 +148,6 @@ bool Snapshot::calculate_file_mappings()
 void PagePool::clear()
 {
     _counts.clear();
-}
-
-int PagePool::count(const Page &page)
-{
-    return _counts[page.cookie()];
-}
-
-void PagePool::inc_page_count(const Page &page)
-{
-    _counts[page.cookie()] = _counts[page.cookie()]++;
-}
-
-void PagePool::inc_pages_count(const std::list<Page> &pages)
-{
-    list<Page>::const_iterator it;
-    for (it = pages.begin(); it != pages.end(); ++it) {
-	inc_page_count(*it);
-    }
 }
 
 // ------------------------------------------------------------
@@ -246,10 +230,13 @@ bool Process::load(SysInfoPtr &sys_info)
 
 void Process::remove_vdso_if_nopages()
 {
+    stringstream pref;
+    pref << pid() << " remove_vdso_if_nopages: ";
     list<VmaPtr>::iterator it;
     
     for (it = _vmas.begin(); it != _vmas.end(); ++it) {
 	if ((*it)->is_vdso() && (*it)->num_pages() == 0) {
+	    dbg << pref.str() << "removing\n";
 	    _vmas.erase(it);
 	    return;
 	}
@@ -317,6 +304,9 @@ list<MapPtr> Process::restrict_maps_to_file(const FilePtr &file)
 
     file_maps.sort();
     proc_maps.sort();
+    dbg << _pid << ": " << "rmtf " << file->name() << ": "
+	<< proc_maps.size() << " procs "
+	<< file_maps.size() << " files\n";
     
     while (!file_maps.empty() && !proc_maps.empty()) {
 	if (file_maps.front() == proc_maps.front()) {
@@ -345,46 +335,11 @@ void Process::add_file(const FilePtr &file)
     _files.insert(file);
 }
 
-bool Process::calc_vma_maps(FilePoolPtr &file_pool)
+bool Process::calculate_maps(FilePoolPtr &file_pool)
 {
-    list<MapPtr> vma_maps;
-    list<VmaPtr>::iterator vma_it;
+    MapCalculator mc(_vmas, file_pool, selfptr());
 
-    _maps.clear();
-    
-    VmaPtr previous_vma;
-    FilePtr previous_file;
-    FilePtr file;
-    for (vma_it = _vmas.begin(); vma_it != _vmas.end(); ++vma_it) {
-	file = file_pool->get_or_make_file((*vma_it)->fname());
-	file->add_proc(selfptr());
-	vma_maps = (*vma_it)->calc_maps(file,
-					previous_vma,
-					previous_file,
-					pid());
-
-	if (vma_maps.empty()) {
-	    warn << pid() << ": can't calc maps for vma " << hex
-		 << (*vma_it)->start() << dec << " : " << file->name() << "\n";
-	}
-
-	_maps.insert(_maps.end(), vma_maps.begin(), vma_maps.end());
-	add_file(file);
-	previous_vma = *vma_it;
-	previous_file = file;
-    }
-
-    list<RangePtr> ranges;
-    list<MapPtr>::iterator map_it;
-    for (map_it = _maps.begin(); map_it != _maps.end(); ++map_it) {
-	ranges.push_back((*map_it)->mem_range());
-    }
-    if (Range::any_overlap(ranges)) {
-	warn << pid() << ": overlapping vma ranges\n";
-	return false;
-    }
-
-    return !_maps.empty();
+    return mc.calc_maps(_maps) && !_maps.empty();
 }
 
 
@@ -398,9 +353,9 @@ bool Process::load_page_info(SysInfoPtr &sys_info)
 	return false;
     }
 
-    map<Address, list<Page> >::iterator vma_it;
-    for (vma_it = page_info.begin(); vma_it != page_info.end(); ++vma_it) {
-	Address start_address = vma_it->first;
+    map<Address, list<Page> >::iterator pi_it;
+    for (pi_it = page_info.begin(); pi_it != page_info.end(); ++pi_it) {
+	Address start_address = pi_it->first;
 	VmaPtr vma;
 	if (!find_vma_by_addr(start_address, vma)) {
 	    // This can happen, a process can alloc whilst we are
@@ -410,8 +365,8 @@ bool Process::load_page_info(SysInfoPtr &sys_info)
 	    continue;
 	}
 	
-	vma->add_pages(vma_it->second);
-	_page_pool->inc_pages_count(vma_it->second);
+	vma->add_pages(pi_it->second);
+	_page_pool->inc_pages_count(pi_it->second);
     }
 
     return true;
@@ -429,7 +384,6 @@ bool Process::find_vma_by_addr(Address start,
     list<VmaPtr>::const_iterator it;
 
     for (it = _vmas.begin(); it != _vmas.end(); ++it) {
-	dbg << "vma " << (*it)->start() << " s " << start << "\n";
 	if ((*it)->start() == start) {
 	    vma = *it;
 	    return true;
@@ -441,12 +395,13 @@ bool Process::find_vma_by_addr(Address start,
 
 void Process::print(ostream &os) const
 {
-    os << "PID: " << _pid << "\n";
+    os << "PID: " << _pid << "\n"
+	<< "CMD: " << _cmdline << "\n";
     std::list<MapPtr>::const_iterator map_it;
-
     for (map_it = _maps.begin(); map_it != _maps.end(); ++map_it) {
 	os << **map_it << "\n";
     }
+    os << "\n";
 }
 
 
@@ -462,6 +417,18 @@ Vma::Vma(Elf::Address start,
 {
     _range = RangePtr(new Range(start, end));
 }
+
+Elf::Address Vma::start() { return _range->start(); }
+
+Elf::Address Vma::end() { return _range->end(); }
+
+RangePtr Vma::range() { return _range; }
+
+std::string Vma::fname() { return _fname; }
+
+off_t Vma::offset() { return _offset; }
+
+Elf::Address Vma::vm_size() { return _range->size(); }
 
 int Vma::num_pages()
 {
@@ -507,12 +474,13 @@ bool Vma::is_file_backed()
 bool Vma::addr_to_pgnum(Address addr, unsigned int &pgnum)
 {
     if (addr > end()) {
-	warn << addr << " is beyond vma end " << end() << "\n";
+	warn << hex << addr << " is beyond vma end " << end() << dec << "\n";
 	return false;
     }
     Address a = Elf::page_align_down(addr);
     if (a < start()) {
-	warn << addr << " is before vma start " << start() << "\n";
+	warn << hex << addr << " is before vma start "
+	    << start() << dec << "\n";
 	return false;
     }
     a -= start();
@@ -523,11 +491,15 @@ bool Vma::addr_to_pgnum(Address addr, unsigned int &pgnum)
 bool Vma::get_pages_for_range(const RangePtr &mrange,
 			      std::list<PartialPageInfo> &ppinfo)
 {
-    struct PartialPageInfo ppi;
     ppinfo.clear();
     
     if (mrange->size() <= 0) {
 	warn << "Vma::get_pages_for_range - invalid range\n";
+	return false;
+    }
+    if (!range()->contains(mrange)) {
+	warn << "Vma::get_pages_for_range - range "
+	    << mrange->to_string() << " outside vma " << to_string() << "\n";
 	return false;
     }
 
@@ -557,27 +529,22 @@ bool Vma::get_pages_for_range(const RangePtr &mrange,
     }
 
     if (start_pgnum == end_pgnum) {
-	ppi.page = _pages[start_pgnum];
-	ppi.bytes = mrange->size();
-	ppinfo.push_back(ppi);
+	ppinfo.push_back(PartialPageInfo(_pages[start_pgnum], mrange->size()));
 	return true;
     }
 
-    ppi.page = _pages[start_pgnum];
-    ppi.bytes = Elf::PAGE_SIZE
+    Address bytes = Elf::PAGE_SIZE
 	- (mrange->start() - Elf::page_align_down(mrange->start()));
-    ppinfo.push_back(ppi);
+    ppinfo.push_back(PartialPageInfo(_pages[start_pgnum], bytes));
 
-    ppi.page = _pages[end_pgnum];
-    ppi.bytes = mrange->end() - Elf::page_align_down(mrange->end() - 1);
-    if (ppi.bytes > 0) {
-	ppinfo.push_back(ppi);
+    bytes = mrange->end() - Elf::page_align_down(mrange->end() - 1);
+    if (bytes > 0) {
+	ppinfo.push_back(PartialPageInfo(_pages[end_pgnum], bytes));
     }
 
-    ppi.bytes = Elf::PAGE_SIZE;
+    bytes = Elf::PAGE_SIZE;
     for (unsigned int pgnum = start_pgnum + 1; pgnum < end_pgnum; ++pgnum) {
-	ppi.page = _pages[pgnum];
-	ppinfo.push_back(ppi);
+	ppinfo.push_back(PartialPageInfo(_pages[pgnum], bytes));
     }
 
     return true;
@@ -588,205 +555,17 @@ string Vma::to_string() const
 {
     stringstream sstr;
     sstr << hex;
-    sstr << _range << ": " << _fname;
+    sstr << _range << ": " << _offset << " " << _fname;
     return sstr.str();
 }
 
 
 
-// Helper comparison function for sort in calc_maps
-static bool mapptr_starts_before(const MapPtr &a,
-			      const MapPtr &b)
-{
-    return a->mem_range()->start() < b->mem_range()->start();
-}
-
-// Come up with a list of elf maps which exactly cover this vma.  We
-// can refer back to the previous vma & file to clarify the various
-// cases.
-list<MapPtr> Vma::calc_maps(const FilePtr &file,
-			    const VmaPtr &previous_vma,
-			    const FilePtr &previous_file,
-			    pid_t pid)
-{
-    list<MapPtr> maps;
-    list<MapPtr>::iterator map_it;
-    list<Elf::SegmentPtr> segs;
-    RangePtr null_range;
-
-    if (file->is_elf()) {
-
-	// Case 1: This is an elf backed vma.  Then for each loadable
-	// segment, we calculate the elf address->vma address offset
-	// and work out which how much of the segment overlaps our
-	// address space. We turn those into maps and any holes into
-	// anon maps.
-
-	segs = file->elf()->loadable_segments();
-	list<Elf::SegmentPtr>::iterator it;
-	list<RangePtr> mem_ranges;
-	for (it = segs.begin(); it != segs.end(); ++it) {
-	    Address seg_to_mem;
-	    if (!get_seg_to_mem(*it, seg_to_mem)) {
-		warn << pid << ": can't get seg_to_mem\n";
-		continue;
-	    }
-	    RangePtr seg_mem_range = (*it)->mem_range()->add(seg_to_mem);
-	    RangePtr subrange = seg_mem_range->intersect(*_range);
-	    if (!subrange || subrange->size() <= 0) {
-		continue;
-	    }
-	    RangePtr elf_subrange = subrange->subtract(seg_to_mem);
-	    MapPtr map(new Map(selfptr(), subrange, elf_subrange));
-	    maps.push_back(map);
-	    file->add_map(map);
-	    mem_ranges.push_back(map->mem_range());
-	}
-
-	// Add holes
-	list<RangePtr> hole_ranges = _range->invert_list(mem_ranges);
-	list<RangePtr>::iterator range_it;
-	for (range_it = hole_ranges.begin();
-	     range_it != hole_ranges.end();
-	     ++range_it) {
-	    MapPtr hmap(new Map(selfptr(), *range_it, null_range));
-	    maps.push_back(hmap);
-	}
-    }
-    else {
-
-	// Cases 2a and 2b
-	MapPtr non_elf_map;
-	if (previous_vma
-	    && previous_file
-	    && previous_vma->is_file_backed()
-	    && previous_file->is_elf()
-	    && _range->start() == previous_vma->_range->end()) {
-
-	    // Case 2a: This is not a file backed vma
-	    // AND previous is file backed
-	    // AND previous file is elf
-	    // AND this vma is contiguous with the previous
-	    //
-	    // In which case we take the previous vma's segments and
-	    // offsets and see if we have an overlap. We assert that
-	    // the overlap will be at the beginning of this vma.  Any
-	    // remainder gets added turned into an anon map
-	    
-	    list<Elf::SegmentPtr> prevsegs
-		= previous_file->elf()->loadable_segments();
-	    Address non_elf_start = start();
-
-	    list<Elf::SegmentPtr>::iterator it;
-	    for (it = prevsegs.begin(); it != prevsegs.end(); ++it) {
-		Address seg_to_mem;
-		if (!previous_vma->get_seg_to_mem(*it, seg_to_mem)) {
-		    warn << pid << ": can't get seg_to_mem on previous vma\n";
-		    continue;
-		}
-		RangePtr seg_mem_range = (*it)->mem_range()->add(seg_to_mem);
-		RangePtr subrange = seg_mem_range->intersect(*_range);
-		if (!subrange || subrange->size() <= 0) {
-		    continue;
-		}
-		RangePtr elf_subrange = subrange->subtract(seg_to_mem);
-		MapPtr map(new Map(selfptr(), subrange, elf_subrange));
-		non_elf_start = subrange->end();
-		maps.push_back(map);
-		previous_file->add_map(map);
-	    }
-
-	    if (non_elf_start < end()) {
-		RangePtr non_elf_range(new Range(non_elf_start, end()));
-		non_elf_map.reset(new Map(selfptr(),
-					  non_elf_range,
-					  null_range));
-	    }
-	}
-	else {
-
-	    // (2b) This is not a file backed vma and some or all of
-	    // the previous conditions do not hold. In which case we
-	    // turn cover the entire vma with a non-elf map.
-	    
-	    non_elf_map.reset(new Map(selfptr(), _range, null_range));
-	}
-	if (non_elf_map) {
-	    maps.push_back(non_elf_map);
-	    file->add_map(non_elf_map);
-	}
-    }
-
-
-    // We may not have the maps in ascending order of start address,
-    // since we added the 'holes' at the end of case 1. Ensure by
-    // sorting here.
-    maps.sort(mapptr_starts_before);
-
-    if (maps.empty()) {
-	warn << pid << ": empty maps\n";
-	return maps;
-    }
-    list<MapPtr> empty_maps;
-    if (maps.front()->mem_range()->start() != _range->start()) {
-	warn << pid << ": first map is not at start: "
-	     << maps.front()->mem_range() << " : "
-	     << _range << "\n";
-	return empty_maps;
-    }
-    if (maps.back()->mem_range()->end() != _range->end()) {
-	warn << pid << ": last map is not at end\n";
-	return empty_maps;
-    }
-    
-    RangePtr last_range;
-    for (map_it = maps.begin(); map_it != maps.end(); ++map_it) {
-	RangePtr range = (*map_it)->mem_range();
-	if (range->size() <= 0) {
-	    warn << pid << ": zero length map: " << range << "\n";
-	}
-	if (last_range &&
-	    last_range->end() != range->start()) {
-	    warn << pid << ": invalid map list: "
-		 << last_range << " - " << range << "\n";
-	    return empty_maps;
-	}
-    }
-    
-    return maps;
-}
-    
-bool Vma::get_seg_to_mem(const Elf::SegmentPtr &seg,
-			 Address &seg_to_mem)
-{
-    if (!is_file_backed()) {
-	warn << "get_seg_to_mem called on non-file backed vma\n";
-	return false;
-    }
-
-    Address segmem_base = seg->mem_range()->start() - seg->offset();
-    Address vmamem_base = start() - offset();
-    seg_to_mem = vmamem_base - segmem_base;
-    return true;
-}
-
 // ------------------------------------------------------------
 
-bool Page::parse_line(const string &line)
-{
-    stringstream sstr(line);
-
-    int i;
-
-    sstr >> i;
-    _resident = i;
-    sstr >> i;
-    _writable = i;
-
-    sstr >> hex >> _cookie;
-
-    return true;
-}
+    Page::Page(PageCookie cookie, bool resident, bool writable)
+: _cookie(cookie), _resident(resident), _writable(writable)
+{ }
 
 PageCookie Page::cookie() const
 {
@@ -818,21 +597,21 @@ void Page::print(ostream &os) const
 Sizes::Sizes()
 {
     for (int i = 0; i < NUM_SIZES; ++i) {
-	_values[i] = 0;
+	_values[i] = 0.0;
     }
 }
 
-unsigned long Sizes::val(int which)
+double Sizes::val(int which)
 {
     return _values[which];
 }
 
-float Sizes::sval(int which)
+double Sizes::sval(int which)
 {
-    return (float) _values[which] / (float) _scale_factor;
+    return _values[which] / (double)_scale_factor;
 }
 
-void Sizes::increase(enum Measure which, unsigned long amount)
+void Sizes::increase(enum Measure which, double amount)
 {
     _values[which] += amount;
 }
@@ -926,9 +705,18 @@ list<MapPtr> File::maps()
 
 SizesPtr File::sizes()
 {
+    if (_procs.empty()) {
+	warn << "File::sizes - no processes for file " << name() << "\n";
+	SizesPtr null_sizes;
+	return null_sizes;
+    }
     ProcessPtr proc = *(_procs.begin());
-    return Map::sum_sizes(proc->page_pool(),
-			  _maps);
+    return Map::sum_sizes(proc->page_pool(), _maps);
+}
+
+void File::add_maps(const list<MapPtr> &maps)
+{
+    _maps.insert(_maps.end(), maps.begin(), maps.end());
 }
 
 void File::add_map(const MapPtr &map)
@@ -947,14 +735,21 @@ Map::Map(const VmaPtr &vma,
 	 const RangePtr &mem_range,
 	 const RangePtr &elf_range)
     : _vma(vma), _mem_range(mem_range), _elf_range(elf_range)
-{ }
+{
+    if (mem_range->size() <= 0) {
+	warn << "Map: zero sized mem range " << to_string() << "\n";
+    }
+    if (elf_range && elf_range->size() != mem_range->size()) {
+	warn << "Map: mismatched elf and mem ranges " << to_string() << "\n";
+    }
+}
 
-RangePtr Map::mem_range()
+RangePtr Map::mem_range() const
 {
     return _mem_range;
 }
 
-RangePtr Map::elf_range()
+RangePtr Map::elf_range() const
 {
     return _elf_range;
 }
@@ -967,7 +762,7 @@ Address Map::elf_to_mem_offset()
 
 RangePtr Map::elf_to_mem_range(const RangePtr &elf_range)
 {
-    if (!_elf_range->contains(*elf_range)) {
+    if (!_elf_range->contains(elf_range)) {
 	warn << "Range " << elf_range->to_string()
 	     << " not contained within " << _elf_range->to_string() << "\n";
 	return RangePtr((Range *) 0);
@@ -996,35 +791,33 @@ SizesPtr Map::sizes_for_mem_range(const PagePoolPtr &pp,
 {
     SizesPtr null_sizes;
     SizesPtr sizes(new Sizes);
-    RangePtr subrange = _mem_range->intersect(*mrange);
 
-    if (!subrange) {
+    if (!_mem_range->contains(mrange)) {
 	warn << "Non-overlapping range: " << *mrange
 	     << " not within " << _mem_range << "\n";
 	return null_sizes;
     }
     
+    RangePtr subrange = _mem_range->intersect(*mrange);
+
     if (subrange->size() == 0) { return sizes; }
     
     std::list<Vma::PartialPageInfo> ppi_info;
     if (!_vma->get_pages_for_range(subrange, ppi_info)) {
-	warn << "Can't get pages for range\n";
+	warn << "sizes_for_mem_range: Can't get pages for range "
+	    << subrange->to_string() << "\n";
 	return null_sizes;
     }
 
     std::list<Vma::PartialPageInfo>::iterator it;
 
-    // Do the effectiveness calculations as floats to help minimise
-    // rounding error (which starts to get significant for heavily
-    // shared pages)
-    float effective_resident = 0.0;
-    float effective_mapped = 0.0;
-    
     for (it = ppi_info.begin(); it != ppi_info.end(); ++it) {
-	Page page((*it).page);
-	int count = pp->count(page);
+	Page &page = (*it).page;
+	int count = pp->count((*it).page);
 	int bytes = (*it).bytes;
 
+	dbg << "page: " << hex << page.cookie() << dec
+	    << " count " << count << " bytes " << bytes << "\n";
 	if (count <= 0) {
 	    warn << "Invalid count for page\n";
 	    continue;
@@ -1034,16 +827,14 @@ SizesPtr Map::sizes_for_mem_range(const PagePoolPtr &pp,
 
 	if (page.is_mapped()) {
 	    sizes->increase(Sizes::MAPPED, bytes);
-	    //	    sizes->increase(Sizes::EFFECTIVE_MAPPED, bytes / count);
-	    effective_mapped += (float) bytes / count;
+	    sizes->increase(Sizes::EFFECTIVE_MAPPED, (double) bytes / count);
 	    if (count == 1) {
 		sizes->increase(Sizes::SOLE_MAPPED, bytes);
 	    }
 
 	    if (page.is_resident()) {
 		sizes->increase(Sizes::RESIDENT, bytes);
-		//sizes->increase(Sizes::EFFECTIVE_RESIDENT, bytes / count);
-		effective_resident += (float) bytes / count;
+		sizes->increase(Sizes::EFFECTIVE_RESIDENT, (double) bytes / count);
 
 		if (page.is_writable()) {
 		    sizes->increase(Sizes::WRITABLE, bytes);
@@ -1052,11 +843,6 @@ SizesPtr Map::sizes_for_mem_range(const PagePoolPtr &pp,
 	}
     }
     
-    sizes->increase(Sizes::EFFECTIVE_MAPPED,
-		    (unsigned long) effective_mapped);
-    sizes->increase(Sizes::EFFECTIVE_RESIDENT,
-		    (unsigned long) effective_resident);
-
     if (sizes->val(Sizes::VM) != subrange->size()) {
 	warn << "Size mismatch: vm size " << sizes->val(Sizes::VM)
 	     << " range " << subrange->to_string() << "\n";
@@ -1081,6 +867,18 @@ SizesPtr Map::sum_sizes(const PagePoolPtr &pp,
 	sizes->add(subsizes);
     }
     return sizes;
+}
+
+static bool mapptr_is_less_than(const MapPtr &lhs, const MapPtr &rhs)
+{
+    return lhs->mem_range()->start() < rhs->mem_range()->start();
+}
+
+list<MapPtr> Map::sort(const list<MapPtr> &maplist)
+{
+    list<MapPtr> result(maplist);
+    result.sort(mapptr_is_less_than);
+    return result;
 }
 
 // ------------------------------------------------------------
@@ -1168,9 +966,7 @@ bool LinuxSysInfo::read_page_info(pid_t pid,
 	    Address start_addr;
 	    string token;
 	    sstr.str(it->substr(6)); // "VMA 0xdeadbeef"
-	    dbg << "line is " << (*it);
 	    sstr >> hex >> start_addr;
-	    dbg << "start is " << start_addr << "\n";
 
 	    // Put a (copy of) the empty pagelist in for this address
 	    page_info[start_addr] = empty_pagelist;
@@ -1179,21 +975,41 @@ bool LinuxSysInfo::read_page_info(pid_t pid,
 	    current_pagelist = &(page_info[start_addr]);
 	}
 	else {
-	    Page page;
-	    if (page.parse_line(*it)) {
-		if (current_pagelist == NULL) {
-		    warn << "read_page_info: page info line before VMA\n";
-		    continue;
-		}
-		current_pagelist->push_back(page);
-	    }
-	    else {
+	    bool writable, resident;
+	    PageCookie cookie;
+	    if (!parse_page_line(*it, resident, writable, cookie)) {
 		warn << "read_page_info - bad page line:" << pid << "\n";
 		continue;
 	    }
+	    if (current_pagelist == NULL) {
+		warn << "read_page_info: page info line before VMA\n";
+		continue;
+	    }
+	    Page p(cookie, resident, writable);
+	    current_pagelist->push_back(p);
 	}
     }
-    
+
+    return true;
+}
+
+bool LinuxSysInfo::parse_page_line(const string &line,
+	bool &resident,
+	bool &writable,
+	PageCookie &cookie)
+{
+    stringstream sstr(line);
+
+    int i, i_resident;
+
+    sstr >> i_resident;
+    resident = i_resident;
+    sstr >> i;
+    writable = i;
+
+    sstr >> hex >> cookie;
+    cookie |= (i_resident << 31);
+
     return true;
 }
 
@@ -1279,3 +1095,311 @@ string LinuxSysInfo::proc_map_file(pid_t pid)
     sstr << "/proc/" << pid << "/maps";
     return sstr.str();
 }
+
+
+
+    
+MapCalculator::MapCalculator(const list<VmaPtr> &vmas,
+			     FilePoolPtr &file_pool,
+			     const ProcessPtr &proc)
+: _vmas(vmas), _file_pool(file_pool), _proc(proc)
+{
+    _maps.clear();
+}
+
+bool MapCalculator::calc_maps(list<MapPtr> &maps)
+{
+    walk_vma_files();
+
+    list<string> fnames = map_keys(_fname_to_vmas);
+    list<string>::iterator it;
+    for (it = fnames.begin(); it != fnames.end(); ++it) {
+	if (!calc_maps_for_file(*it)) {
+	    warn << "calc_maps: failed to calc for " << *it << "\n";
+	    return false;
+	}
+    }
+
+    if (!add_holes()) {
+	warn << "calc_maps: failed to add hole maps\n";
+	return false;
+    }
+
+    maps = Map::sort(_maps);
+
+    if (!sanity_check(maps)) {
+	warn << "calc_maps: sanity check failed\n";
+	return false;
+    }
+
+
+    return true;
+}
+
+bool MapCalculator::add_holes()
+{
+    stringstream pref;
+    pref << _proc->pid() << " add_holes: ";
+    list<MapPtr>::iterator map_it;
+    list<RangePtr> map_ranges;
+
+    // this wouldn't require a loop or a (named) helper function in a
+    // decent language
+    for (map_it = _maps.begin(); map_it != _maps.end(); ++map_it) {
+	map_ranges.push_back((*map_it)->mem_range());
+    }
+
+    list<VmaPtr>::iterator vma_it;
+    list<RangePtr>::iterator hole_it;
+    RangePtr null_range;
+    for (vma_it = _vmas.begin(); vma_it != _vmas.end(); ++vma_it) {
+	VmaPtr &vma = *vma_it;
+	dbg << pref.str() << "adding holes for vma range"
+	    << vma->range() << "\n";
+	list<RangePtr> vma_holes = vma->range()->invert_list(map_ranges);
+	FilePtr file = _file_pool->get_or_make_file(vma->fname());
+	for (hole_it = vma_holes.begin();
+		hole_it != vma_holes.end();
+		++hole_it) {
+	    MapPtr map(new Map(vma, *hole_it, null_range));
+	    _maps.push_back(map);
+	    file->add_map(map);
+	    dbg << pref.str() << "adding hole " << map->to_string() << "\n";
+	}
+    }
+
+    return true;
+}
+
+bool MapCalculator::sanity_check(const list<MapPtr> &maps)
+{
+    stringstream pref;
+    pref << _proc->pid() << " sanity_check: ";
+    list<MapPtr>::const_iterator map_it = maps.begin();
+    list<VmaPtr>::iterator vma_it = _vmas.begin();
+
+
+    while (vma_it != _vmas.end()) {
+	VmaPtr &vma = *vma_it;
+	if ((*map_it)->mem_range()->start() != vma->start()) {
+	    warn << pref.str() << "map not at start of vma: "
+		<< (*map_it)->to_string() << " " << vma->to_string() << "\n";
+	    return false;
+	}
+
+	MapPtr lastmap;
+	while ((*map_it)->mem_range()->end() < vma->end()) {
+	    if (!vma->range()->contains((*map_it)->mem_range())) {
+		warn << pref.str() << "map not contained within vma: "
+		    << (*map_it)->to_string() << " " << vma->to_string()
+		    << "\n";
+		return false;
+	    }
+	    ++map_it;
+	    if (map_it == maps.end()) {
+		warn << pref.str() << "maps don't cover vma "
+		    << vma->to_string() << "\n";
+		return false;
+	    }
+	    if (lastmap && lastmap->mem_range()->end() != (*map_it)->mem_range()->start()) {
+		warn << pref.str() << "maps are not contiguous "
+		    << lastmap->to_string() << " "
+		    << (*map_it)->to_string() << "\n";
+		warn << "----------------------------\n";
+		for (map_it = maps.begin(); map_it != maps.end(); ++map_it) {
+		    warn << (*map_it)->to_string() << "\n";
+		}
+		warn << "----------------------------\n";
+		return false;
+	    }
+	    lastmap = *map_it;
+	}
+
+	if ((*map_it)->mem_range()->end() != vma->end()) {
+	    warn << pref.str() << "map doesn't end at end of vma: "
+		<< (*map_it)->to_string() << " " << vma->to_string() << "\n";
+	    return false;
+	}
+	
+	++vma_it;
+	++map_it;
+	if (vma_it != _vmas.end() && map_it == maps.end()) {
+	    warn << pref.str() << "not enough maps for vmas "
+		<< vma->to_string() << "\n";
+	    return false;
+	}
+    }
+
+    if (map_it != maps.end()) {
+	warn << pref.str() << "too many maps for vmas\n";
+	return false;
+    }
+
+    return true;
+}
+
+bool MapCalculator::calc_maps_for_file(const string &fname)
+{
+    stringstream pref;
+    pref << _proc->pid() << " " << fname << " calc_maps_for_file: ";
+    FilePtr file = _file_pool->get_or_make_file(fname);
+
+    size_t num_maps_before = _maps.size();
+    if (file->is_elf()) {
+	dbg << pref.str() << "elf file\n";
+	if(!calc_maps_for_elf_file(fname, file)) {
+	    warn << pref.str() << "failed to calc elf file maps\n";
+	    return false;
+	}
+    }
+    else {
+	dbg << pref.str() << "non elf file\n";
+	if(!calc_maps_for_nonelf_file(fname, file)) {
+	    warn << pref.str() << "failed to calc nonelf file maps\n";
+	    return false;
+	}
+    }
+
+    if (_maps.size() == num_maps_before) {
+	warn << pref.str() << "no maps added for file\n";
+	return false;
+    }
+
+    return true;
+}
+
+bool MapCalculator::calc_maps_for_nonelf_file(const string &fname,
+	const FilePtr &file)
+{
+    stringstream pref;
+    pref << _proc->pid() << " " << fname << " calc_maps_for_nonelf_file: ";
+    list<VmaPtr> filevmas = _fname_to_vmas[fname];
+
+    if (filevmas.empty()) {
+	warn << pref.str() << "no vmas for nonelf file\n";
+	return false;
+    }
+
+    list <VmaPtr>::const_iterator it;
+    RangePtr null_range;
+    for (it = filevmas.begin(); it != filevmas.end(); ++it) {
+	const VmaPtr &vma = *it;
+	// filevmas includes any trailing non file backed vmas. we don't
+	// want them here
+	if (vma->fname() != fname) {
+	    continue;
+	    // not a warning
+	    dbg << pref.str() << "vma name mismatch "
+		<< vma->to_string() << "\n";
+//	    warn << pref.str() << "vma name mismatch "
+//		<< vma->to_string() << "\n";
+	}
+	MapPtr map(new Map(vma, vma->range(), null_range));
+	_maps.push_back(map);
+	file->add_map(map);
+	dbg << pref.str() << "adding nonelf map " << map->to_string() << "\n";
+    }
+
+    return true;
+}
+
+bool MapCalculator::calc_maps_for_elf_file(const string &fname,
+	const FilePtr &file)
+{
+    stringstream pref;
+    pref << _proc->pid() << " " << fname << " calc_maps_for_elf_file: ";
+    list<Elf::SegmentPtr> segs = file->elf()->loadable_segments();
+    if (segs.empty()) {
+	warn << pref.str() << "no loadable segments\n";
+	return false;
+    }
+
+    list<VmaPtr> filevmas = _fname_to_vmas[fname];
+    if (filevmas.empty()) {
+	warn << pref.str() << "no vmas for segment\n";
+	return false;
+    }
+
+    list<Elf::SegmentPtr>::iterator it;
+    for (it = segs.begin(); it != segs.end(); ++it) {
+	if (!calc_map_for_seg(file, *it, filevmas)) {
+	    warn << pref.str() << "can't calc map for seg\n";
+	    return false;
+	}
+    }
+
+    return true;
+}
+
+bool MapCalculator::calc_map_for_seg(const FilePtr &file,
+	const Elf::SegmentPtr &seg,
+	list<VmaPtr> &filevmas)
+{
+    stringstream pref;
+    string fname = file->name();
+    pref << _proc->pid() << " " << fname << " calc_map_for_seg: ";
+
+    dbg << pref.str() << "calc_map_for_seg\n";
+
+    if (filevmas.empty()) {
+	warn << pref.str() << "empty vma list\n";
+    }
+
+    list<VmaPtr>::const_iterator it;
+    Address seg_to_mem;
+    for (it = filevmas.begin(); it != filevmas.end(); ++it) {
+	const VmaPtr &vma = *it;
+	if (vma->is_file_backed()) {
+	    seg_to_mem = get_seg_to_mem(seg, vma);
+	}
+
+	RangePtr seg_mem_range = seg->mem_range()->add(seg_to_mem);
+	RangePtr working_mrange = seg_mem_range->intersect(*(vma->range()));
+	if (!working_mrange || working_mrange->size() <= 0) {
+	    continue;
+	}
+	RangePtr elf_mem_range = working_mrange->subtract(seg_to_mem);
+	MapPtr map(new Map(vma, working_mrange, elf_mem_range));
+	_maps.push_back(map);
+	file->add_map(map);
+	dbg << pref.str() << "adding elf map " << map->to_string() << "\n";
+    }
+
+    filevmas.pop_front();
+    dbg << pref.str() << "consuming vma\n";
+
+    return true;
+}
+
+
+void MapCalculator::walk_vma_files()
+{
+    list<VmaPtr>::iterator it;
+
+    string last_file_backed;
+    for(it = _vmas.begin(); it != _vmas.end(); ++it) {
+	VmaPtr &vma = *it;
+
+	FilePtr file = _file_pool->get_or_make_file(vma->fname());
+	file->add_proc(_proc);
+	_proc->add_file(file);
+
+	// associate non-file-backed vmas with the last file backed
+	// one
+	if (vma->is_file_backed()) {
+	    last_file_backed = vma->fname();
+	}
+	if (!last_file_backed.empty()) {
+	    _fname_to_vmas[last_file_backed].push_back(vma);
+	}
+    }
+}
+
+Elf::Address MapCalculator::get_seg_to_mem(const Elf::SegmentPtr &seg,
+	const VmaPtr &vma)
+{
+    Address segmem_base = seg->mem_range()->start() - seg->offset();
+    Address vmamem_base = vma->start() - vma->offset();
+    return vmamem_base - segmem_base;
+}
+

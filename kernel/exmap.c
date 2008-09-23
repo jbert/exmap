@@ -29,12 +29,20 @@
 #include <linux/kernel.h>
 #include <linux/proc_fs.h>
 #include <linux/mm.h>
-#include <linux/rmap.h>
 #include <linux/pagemap.h>
 #include <linux/version.h>
 #include <linux/vmalloc.h>
 #include <linux/swap.h>
 #include <linux/swapops.h>
+
+/* Allow compilation on some kernels prior to 2.6.11 */
+
+#undef HAVE_PUD_T
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,11)
+#define HAVE_PUD_T
+#endif
+
+
 
 #define PROCFS_NAME "exmap"
 MODULE_LICENSE ("GPL");
@@ -103,9 +111,11 @@ static int walk_page_tables(struct mm_struct *mm,
 			    pte_t *pte_ret)
 {
 	pgd_t *pgd;
-	pud_t *pud;
 	pmd_t *pmd;
 	pte_t *ptep;
+#ifdef HAVE_PUD_T
+	pud_t *pud;
+#endif
 
 	// No support for HUGETLB as yet
 	//page = follow_huge_addr(mm, address, write);
@@ -116,11 +126,15 @@ static int walk_page_tables(struct mm_struct *mm,
 	if (pgd_none(*pgd) || unlikely(pgd_bad(*pgd)))
 		goto out;
 
+#ifdef HAVE_PUD_T
 	pud = pud_offset(pgd, address);
 	if (pud_none(*pud) || unlikely(pud_bad(*pud)))
 		goto out;
 	
 	pmd = pmd_offset(pud, address);
+#else
+	pmd = pmd_offset(pgd, address);
+#endif
 	if (pmd_none(*pmd) || unlikely(pmd_bad(*pmd)))
 		goto out;
 	ptep = pte_offset_map(pmd, address);

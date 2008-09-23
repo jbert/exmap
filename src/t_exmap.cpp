@@ -16,7 +16,7 @@ public:
     bool run();
     bool teardown();
 private:
-    unsigned long get_pid_size_from_ps(pid_t pid);
+    double get_pid_size_from_ps(pid_t pid);
     
     static const std::string UTILDIR;
     static const std::string SA_EXE;
@@ -92,20 +92,32 @@ bool ExmapTest::run()
     ok(!allprocs.empty(), "can get a list of procs");
     list<ProcessPtr>::iterator proc_it;
     list<ProcessPtr> procs;
+
+    bool failed_to_get_sizes = false;
+    SizesPtr sizes;
     for (proc_it = allprocs.begin(); proc_it != allprocs.end(); ++proc_it) {
 	string cmdline = (*proc_it)->cmdline();
 	if (cmdline== SA_EXE) {
 	    procs.push_back(*proc_it);
 	}
+	sizes = (*proc_it)->sizes();
+	if (!sizes) {
+	    failed_to_get_sizes = true;
+	}
     }
+    ok(!failed_to_get_sizes, "can get sizes for every proc");
+
     is((int) procs.size(), NUM_INSTANCES, "can find all our sharedarray procs");
 
     ProcessPtr proc = procs.front();
-    SizesPtr sizes = proc->sizes();
+    sizes = proc->sizes();
     ok(sizes->val(Sizes::VM) > NUM_ARRAYS * ARRAY_SIZE, "image is big enough");
 
-    unsigned long ps_size = get_pid_size_from_ps(proc->pid());
-    is(sizes->val(Sizes::VM), ps_size, "exmap info matches ps output");
+    double ps_size = get_pid_size_from_ps(proc->pid());
+    is_approx_rel(sizes->val(Sizes::VM),
+		  ps_size,
+		  0.001,
+		  "exmap info matches ps output");
 
     ok(sizes->val(Sizes::RESIDENT) > 0, "nonzero resident size");
     ok(sizes->val(Sizes::EFFECTIVE_RESIDENT) > 0, "nonzero eff resident size");
@@ -126,12 +138,18 @@ bool ExmapTest::run()
 
     Regexp re;
     re.compile(SA_LIB + "$");
+    failed_to_get_sizes = false;
     for (file_it = all_files.begin(); file_it != all_files.end(); ++file_it) {
 	string name = (*file_it)->name();
 	if (re.matches(name)) {
 	    files.push_back(*file_it);
 	}
+	sizes = (*file_it)->sizes();
+	if (!sizes) {
+	    failed_to_get_sizes = true;
+	}
     }
+    ok(!failed_to_get_sizes, "can get sizes for every file");
     is((int) files.size(), 1, "file only listed once");
     FilePtr file = files.front();
     ok(file->is_elf(), "file recognised as elf file");
@@ -160,8 +178,13 @@ bool ExmapTest::run()
     ok(text, "can find text section");
     ok(text->size() > 0, "text section has nonzero size");
     sizes = procs.front()->sizes(file, text->mem_range());
-    is(sizes->val(Sizes::RESIDENT), (unsigned long) 2 * text->size(),
-       "lib text is resident and mapped twice (!)");
+    /// This appears to be compiler and system dependent...
+    /*
+    is_approx_rel(sizes->val(Sizes::RESIDENT),
+		  2.0 * text->size(),
+		  0.001,
+		  "lib text is resident and mapped twice (!)");
+		  */
     
     Elf::SectionPtr bss = file->elf()->section(".bss");
     ok(bss, "can find bss section");
@@ -188,10 +211,10 @@ bool ExmapTest::run()
 	      "data and bss resident within page of each other");
 
 
-    unsigned long bss_resident_arrays_size = 0;
-    unsigned long data_resident_arrays_size = 0;
-    unsigned long bss_writable_arrays_size = 0;
-    unsigned long data_writable_arrays_size = 0;
+    double bss_resident_arrays_size = 0;
+    double data_resident_arrays_size = 0;
+    double bss_writable_arrays_size = 0;
+    double data_writable_arrays_size = 0;
     for (int i = 0; i < NUM_ARRAYS; ++i) {
 	if (ARRAY_INFO[i].initialised) {
 	    data_resident_arrays_size
@@ -222,9 +245,13 @@ bool ExmapTest::run()
 		  "writable size for data in proc correct with a page");
 	
 	sizes = proc->sizes(file, bss->mem_range());
-	is(sizes->val(Sizes::RESIDENT), bss_resident_arrays_size,
+	is_approx_rel(sizes->val(Sizes::RESIDENT),
+		      bss_resident_arrays_size,
+		      0.001,
 		      "correct resident size for bss in proc");
-	is(sizes->val(Sizes::WRITABLE), bss_writable_arrays_size,
+	is_approx_rel(sizes->val(Sizes::WRITABLE),
+		      bss_writable_arrays_size,
+		      0.001,
 		      "correct writable size for bss in proc");
     }
 
@@ -237,13 +264,15 @@ bool ExmapTest::run()
 	is(sym->size(), ARRAY_SIZE, symname + " has correct size");
 	
 	sizes = proc->sizes(file, sym->range());
-	is((int) sizes->val(Sizes::RESIDENT),
-	   ARRAY_SIZE * info->resident_percent / 100,
-	   symname + " has correct resident size");
+	is_approx_rel((int) sizes->val(Sizes::RESIDENT),
+		      ARRAY_SIZE * info->resident_percent / 100,
+		      0.001,
+		      symname + " has correct resident size");
 
-	is((int) sizes->val(Sizes::WRITABLE),
-	   ARRAY_SIZE * info->writable_percent / 100,
-	   symname + " has correct writable size");
+	is_approx_rel(sizes->val(Sizes::WRITABLE),
+		      ARRAY_SIZE * info->writable_percent / 100.0,
+		      0.001,
+		      symname + " has correct writable size");
 
 	// Uninitialised space which is only read appears to be shared
 	// amongst every proc in the system (a 'zero page'?). This is
@@ -292,7 +321,7 @@ bool ExmapTest::run()
 
     ok(!file->is_elf(), MI_DAT + " isn't an elf file");
     off_t fsize = 0;
-    unsigned long mi_data_size = 0;
+    double mi_data_size = 0;
     ok(file_size(MI_DAT, fsize), "can get file size");
     mi_data_size = fsize;
     ok(mi_data_size > 0, "file has nonzero size");
@@ -301,12 +330,18 @@ bool ExmapTest::run()
 	 proc_it != procs.end();
 	 ++proc_it) {
 	sizes = (*proc_it)->sizes(file);
-	is(sizes->val(Sizes::VM), mi_data_size, "correct data file size");
-	is(sizes->val(Sizes::RESIDENT), mi_data_size,
-	   "whole data file is resident");
-	is(sizes->val(Sizes::EFFECTIVE_RESIDENT),
-	   mi_data_size / NUM_INSTANCES,
-	   "data file is shared between instances correctly");
+	is_approx_rel(sizes->val(Sizes::VM),
+		      mi_data_size,
+		      0.001,
+		      "correct data file size");
+	is_approx_rel(sizes->val(Sizes::RESIDENT),
+		      mi_data_size,
+		      0.001,
+		      "whole data file is resident");
+	is_approx_rel(sizes->val(Sizes::EFFECTIVE_RESIDENT),
+		      mi_data_size / NUM_INSTANCES,
+		      0.001,
+		      "data file is shared between instances correctly");
     }
     
     return true;
@@ -315,7 +350,7 @@ bool ExmapTest::run()
 
 bool ExmapTest::setup()
 {
-    plan(195);
+    plan(196);
     
     const string ld_path_env = "LD_LIBRARY_PATH";
     const char *cp = getenv(ld_path_env.c_str());
@@ -335,7 +370,10 @@ bool ExmapTest::setup()
 	ok(fp, "can start instance of " + MI_EXE);
 	_popen_handles.push_back(fp);
     }
-    
+
+    /* let subprocs get ahead. racy. */
+    sleep(1);
+
     return true;
 }
 
@@ -353,7 +391,7 @@ bool ExmapTest::teardown()
 }
 
 
-unsigned long ExmapTest::get_pid_size_from_ps(pid_t pid)
+double ExmapTest::get_pid_size_from_ps(pid_t pid)
 {
     list<string> lines;
     list<string> captures;
@@ -368,7 +406,7 @@ unsigned long ExmapTest::get_pid_size_from_ps(pid_t pid)
     re.match_capture(lines.front(), captures);
     is((int) captures.size(), 2, "Found my captures");
     int size = atoi(captures.back().c_str());
-    return size * 1024;
+    return size * 1024.0;
 }
 
 RUN_TEST_CLASS(ExmapTest);

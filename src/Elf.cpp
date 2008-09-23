@@ -11,6 +11,12 @@ using namespace jutil;
 using namespace Elf;
 
 
+static bool load_table(std::istream &is,
+	const std::string &table_name,
+	Elf32_Off offset,
+	Elf32_Half num_chunks,
+	Elf32_Half chunksize,
+	std::list<std::string> &entries);
 
 
 Address Elf::page_align_down(const Address &addr)
@@ -364,47 +370,6 @@ bool File::load_segments()
     return !_segments.empty();
 }
 
-bool File::load_table(istream &is,
-		      const std::string &table_name,
-		      Elf32_Off offset,
-		      Elf32_Half num_chunks,
-		      Elf32_Half chunksize,
-		      list<string> &entries)
-{
-    entries.clear();
-    
-    if (offset == 0) {
-	warn << "No " << table_name << " present\n";
-	return false;
-    }
-    if (num_chunks < 1) {
-	warn << "Invalid number of chunks " << num_chunks
-	     << " in " << table_name << "\n";
-	return false;
-    }
-
-    is.seekg(offset, ios_base::beg);
-    if (!is.good()) {
-	warn << "Can't seek to offset: " << offset << "\n";
-	return false;
-    }
-
-    unsigned long read_size = num_chunks * chunksize;
-    char *buffer = (char *) alloca(read_size);
-    is.read(buffer, read_size);
-    if (!is.good()) {
-	warn << "Can't read " << read_size << " bytes\n";
-	return false;
-    }
-
-    for (unsigned int i = 0; i < read_size; i += chunksize) {
-	string s(buffer + i, chunksize);
-	entries.push_back(s);
-    }
-
-    return true;
-}
-
 // ------------------------------------------------------------
 
 /*
@@ -617,12 +582,12 @@ bool Section::load_symbols(std::istream &is,
     }
 
     list<string> entries;
-    if (!File::load_table(is,
-			  "symbol table",
-			  _secthdr.sh_offset,
-			  (total_size / symentry_size),
-			  symentry_size,
-			  entries)
+    if (!load_table(is,
+		"symbol table",
+		_secthdr.sh_offset,
+		(total_size / symentry_size),
+		symentry_size,
+		entries)
 	|| entries.empty()) {
 	return false;
     }
@@ -704,5 +669,48 @@ bool Symbol::is_file()
 bool Symbol::is_section()
 {
     return type() == STT_SECTION;
+}
+
+// ------------------------------------------------------------
+
+bool load_table(istream &is,
+	const std::string &table_name,
+	Elf32_Off offset,
+	Elf32_Half num_chunks,
+	Elf32_Half chunksize,
+	list<string> &entries)
+{
+    entries.clear();
+    
+    if (offset == 0) {
+	warn << "No " << table_name << " present\n";
+	return false;
+    }
+    if (num_chunks < 1) {
+	warn << "Invalid number of chunks " << num_chunks
+	     << " in " << table_name << "\n";
+	return false;
+    }
+
+    is.seekg(offset, ios_base::beg);
+    if (!is.good()) {
+	warn << "Can't seek to offset: " << offset << "\n";
+	return false;
+    }
+
+    unsigned long read_size = num_chunks * chunksize;
+    char *buffer = (char *) alloca(read_size);
+    is.read(buffer, read_size);
+    if (!is.good()) {
+	warn << "Can't read " << read_size << " bytes\n";
+	return false;
+    }
+
+    for (unsigned int i = 0; i < read_size; i += chunksize) {
+	string s(buffer + i, chunksize);
+	entries.push_back(s);
+    }
+
+    return true;
 }
 

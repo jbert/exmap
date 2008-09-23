@@ -20,6 +20,10 @@ namespace Exmap
 {
     typedef unsigned long PageCookie;
 
+    // We exclusively pass around class instances via the reference-counted
+    // boost smart ptr 'shared_ptr'. Forward declare all classes here, we'll
+    // need most/all of them in method declarations.
+ 
     class Vma;
     typedef boost::shared_ptr<Vma> VmaPtr;
     class Map;
@@ -37,7 +41,7 @@ namespace Exmap
     class SysInfo;
     typedef boost::shared_ptr<SysInfo> SysInfoPtr;
 
-    /// This class is the interface to the system to query information
+    /// This is the interface to the system to query information
     /// about processes (pids, vmas, page info). It's abstract to
     /// allow plugging in mock objects for testing (and to help
     /// porting).
@@ -55,12 +59,13 @@ namespace Exmap
 
 	/// Read the page info for a pid
 	virtual bool read_page_info(pid_t pid,
-				    std::map<Elf::Address, std::list<Page> > &pi) = 0;
+				    std::map<Elf::Address,
+				    std::list<Page> > &pi) = 0;
 
 	/// Read cmdline for pid
 	virtual std::string read_cmdline(pid_t pid) = 0;
 
-	/// Read vma list
+	/// Read vma list for pid
 	virtual bool read_vmas(const PagePoolPtr &pp,
 			       pid_t pid,
 			       std::list<VmaPtr> &vmas) = 0;
@@ -81,9 +86,16 @@ namespace Exmap
 	virtual bool read_vmas(const PagePoolPtr &pp,
 			       pid_t pid,
 			       std::list<VmaPtr> &vmas);
-    private:
+    protected:
 	/// Parse a single /proc/xxx/maps line and instantiate a vma
+	/// protected to allow use by mock testing objects.
 	VmaPtr parse_vma_line(const std::string &line);
+	/// Parse a single /proc/exmap page line
+	bool parse_page_line(const std::string &line,
+		bool &resident,
+		bool &writable,
+		PageCookie &cookie);
+    private:
 
         std::string proc_map_file(pid_t pid);
 	static const std::string EXMAP_FILE;
@@ -91,7 +103,9 @@ namespace Exmap
 
 
     /// Holds the various measures we can make of a File, Process or
-    /// ELF memory range and also handles scaling to different units.
+    /// ELF memory range. Sizes are measured as doubles, to avoid too much
+    /// rounding down when calculating the effective values.
+    /// A static unit/scale may also be set.
     class Sizes
     {
     public:
@@ -111,13 +125,13 @@ namespace Exmap
 	};
 	
 	/// Get the value, scaled into the current units
-	float sval(int which);
+	double sval(int which);
 
 	/// Get the value
-	unsigned long val(int which);
+	double val(int which);
 
 	/// Add to a value
-	void increase(enum Measure which, unsigned long amount);
+	void increase(enum Measure which, double amount);
 
 	/// Human readable name for the size
 	static std::string size_name(int which);
@@ -139,7 +153,7 @@ namespace Exmap
 	const static std::string names[];
 
 	/// The measure values
-	unsigned long _values[NUM_SIZES];
+	double _values[NUM_SIZES];
 
 	/// Scale starts off as 1
 	static int _scale_factor;
@@ -148,10 +162,11 @@ namespace Exmap
 	static std::string _scale_name;
     };
 
+    /// Thin class to hold information about a single page
     class Page
     {
     public:
-	bool parse_line(const std::string &line);
+	Page(PageCookie cookie, bool resident, bool writable);
 	bool is_mapped() const;
 	bool is_resident() const;
 	bool is_writable() const;
@@ -159,22 +174,16 @@ namespace Exmap
 	void print(std::ostream &os) const;
     private:
 	PageCookie _cookie;
-	int _writable : 1;
 	int _resident : 1;
+	int _writable : 1;
     };
     
 
-    /// Wrap the information about one process vma (i.e. one line from
+    /// Hold information about one process vma (i.e. one line from
     /// /proc/xxx/maps).
     class Vma
     {
     public:
-	struct PartialPageInfo
-	{
-	    Page page;
-	    Elf::Address bytes;
-	};
-	
 	Vma(Elf::Address start,
 	    Elf::Address end,
 	    off_t offset,
@@ -182,27 +191,29 @@ namespace Exmap
 
 	PagePoolPtr &page_pool();
 	
-	/// Record that we own this page (called in order, first to last)
+	/// Record that we own these pages
 	void add_pages(const std::list<Page> &pages);
 
-	/// The vma start addres
-	Elf::Address start() { return _range->start(); }
+	/// The vma start address
+	Elf::Address start();
 
 	/// The vma end addres
-	Elf::Address end() { return _range->end(); }
+	Elf::Address end();
 
+	/// For convenience the range of the start/end
 	RangePtr range();
 	
 	/// The name of the underlying file (possibly [anon] or other
 	/// if there is no real file)
-	std::string fname() { return _fname; }
+	std::string fname();
 
 	/// The offset of the vma start within the file
 	/// (not a useful value unless the Vma is file backed)
-	off_t offset() { return _offset; }
+	off_t offset();
 
 	/// The length of the VM area
-	Elf::Address vm_size() { return _range->size(); }
+	Elf::Address vm_size();
+
 	std::string to_string() const;
 
 	/// True if the vma is the special page - we generally wish to
@@ -213,9 +224,6 @@ namespace Exmap
 	/// filename for specials like [anon], etc
 	bool is_file_backed();
 
-	bool get_pages_for_range(const RangePtr &mrange,
-				 std::list<PartialPageInfo> &info);
-	
 	std::list<MapPtr> calc_maps(const FilePtr &file,
 				    const VmaPtr &previous_vma,
 				    const FilePtr &previous_file,
@@ -225,13 +233,27 @@ namespace Exmap
 	void selfptr(boost::shared_ptr<Vma> &p);
 
 	int num_pages();
+
+	/// Struct to hold page + overlap info
+	struct PartialPageInfo
+	{
+	    PartialPageInfo(const Page &p,
+		    Elf::Address b) : page(p), bytes(b) { }
+	    Page page;
+	    Elf::Address bytes;
+	};
+	
+	/// Get a list of pages which cover the range, together
+	/// with the per-page size of the overlap with the range
+	/// (i.e. always page-size except at the start and end)
+	/// Does a lot of error checking, too.
+	bool get_pages_for_range(const RangePtr &mrange,
+				 std::list<PartialPageInfo> &info);
+	
     private:
 	/// Get the pgnum (index into the page vector) of the given
 	/// address.
 	bool addr_to_pgnum(Elf::Address addr, unsigned int &pgnum);
-	bool get_seg_to_mem(const Elf::SegmentPtr &seg,
-			    Elf::Address &seg_to_mem);
-
 	
 	RangePtr _range;
 	off_t _offset;
@@ -240,25 +262,45 @@ namespace Exmap
 	boost::weak_ptr<Vma> _selfptr;
     };
 
-    /// Store the information about one ELF address -> VMA address map
+    /// A map represents a range of memory (mem_range) within a
+    /// vma. Unlike a VMA, it has a single 'meaning' throughout its range.
+    ///
+    /// Some maps maintain a 1-1 relationship between 'ELF memory addresses'
+    /// and "VMA memory addresses". The ELF memory addresses refer to the
+    /// virtual addresses used within a particular ELF file (the 'file' of
+    /// the Vma referenced by the map).
+    ///
+    /// Note that a Map may actually be outside the Vma to which it refers. 
+    /// This is due to a possibility that the '.bss' section of an ELF
+    /// Segment may "spill over" into a following VMA.
     class Map
     {
     public:
 	Map(const VmaPtr &vma,
 	    const RangePtr &mem_range,
 	    const RangePtr &elf_range);
-	RangePtr mem_range();
-	RangePtr elf_range();
+	/// The VMA memory range of the map
+	RangePtr mem_range() const;
+	/// The 'ELF virtual memory' of the map (may be NULL)
+	RangePtr elf_range() const;
+	/// Convert an elf-mem-range to a VMA memory range
 	RangePtr elf_to_mem_range(const RangePtr &elf_range);
+	/// Return the sizes for the whole Map VMA mem range
 	SizesPtr sizes_for_mem_range(const PagePoolPtr &pp);
+	/// Return the sizes for a subrange of the vma mem range
 	SizesPtr sizes_for_mem_range(const PagePoolPtr &pp,
 				     const RangePtr &mrange);
+	/// Represent the map in string form
 	std::string to_string() const;
+	/// Write the map to a ostream in string form
 	void print(std::ostream &os) const;
 
 	/// Add up all the sizes for a list of maps
 	static SizesPtr sum_sizes(const PagePoolPtr &pp,
 				  const std::list<MapPtr> &maps);
+
+	/// Sort a list of MapPtr
+	static std::list<MapPtr> sort(const std::list<MapPtr> &maplist);
     private:
 	Elf::Address elf_to_mem_offset();
 	VmaPtr _vma;
@@ -266,18 +308,28 @@ namespace Exmap
 	RangePtr _elf_range;
     };
     
-    /// Wrap the information about one file.
+    /// Hold the information about one file.
     class File
     {
     public:
 	File(const std::string &fname);
 	std::string name();
+	/// List of processes which map this file.
 	std::list<ProcessPtr> procs();
-	Elf::FilePtr elf();
-	bool is_elf();
+	/// List of all maps which refer to this file (over many procs)
 	std::list<MapPtr> maps();
+	/// Return the file ELF object if it is an ELF file, null o/w
+	Elf::FilePtr elf();
+	/// True if the file is an ELF file.
+	bool is_elf();
+	/// Return the sizes for all maps over this file.
 	SizesPtr sizes();
+
+	/// Register a map with this file
 	void add_map(const MapPtr &map);
+	/// Register a list of maps with this file
+	void add_maps(const std::list<MapPtr> &maps);
+	/// Register a proc with this file
 	void add_proc(const ProcessPtr &proc);
     private:
 	std::string _fname;
@@ -286,7 +338,7 @@ namespace Exmap
 	Elf::FilePtr _elf;
     };
 
-    /// Hold information regarding each mapped file
+    /// Holds all the file objects, indexed by name
     class FilePool
     {
     public:
@@ -303,35 +355,68 @@ namespace Exmap
     class PagePool
     {
     public:
+	/// Empty the pagepool
 	void clear();
-	int count(const Page &page);
-	void inc_page_count(const Page &page);
-	void inc_pages_count(const std::list<Page> &pages);
+	/// Fetch the usage count of a page
+	inline int count(const Page &page) {
+	    return _counts[page.cookie()];
+	};
+	/// Increase the count of a page (to 1 if the page is previously
+	/// unseen).
+	inline void inc_page_count(const Page &page) {
+	    _counts[page.cookie()] = _counts[page.cookie()]++;
+	};
+	/// Increase the count of a list of pages.
+	inline void inc_pages_count(const std::list<Page> &pages) {
+	    std::list<Page>::const_iterator it;
+	    for (it = pages.begin(); it != pages.end(); ++it) {
+		inc_page_count(*it);
+	    }
+	};
+
     private:
 	std::map<PageCookie, int> _counts;
     };
 
     
-    /// Wrap the information about one process.
+    /// Hold the information about one process.
     class Process
     {
     public:
 	Process(const PagePoolPtr &pp, pid_t pid);
+	/// Load the pid-specific information from the sysinfo
 	bool load(SysInfoPtr &sys_info);
+	/// True if the process has its own memory region (some kernel threads
+	/// have pids but no mem).
 	bool has_mm();
+	/// The pid
 	pid_t pid();
+	/// The process command line
 	std::string cmdline();
+	/// The list of files the process maps
 	std::list<FilePtr> files();
+	/// The sizes over all the process maps
 	SizesPtr sizes();
+	/// The sizes over all the maps associated with a given file
 	SizesPtr sizes(const FilePtr &file);
+	/// The sizes over a given elf range associated with a given file
 	SizesPtr sizes(const FilePtr &file,
 		       const RangePtr &elf_range);
-	bool calc_vma_maps(FilePoolPtr &file_pool);
+	/// Process the vma info into a collection of maps. Also associates
+	/// the maps with the files and processes.
+	bool calculate_maps(FilePoolPtr &file_pool);
+	/// Todo - private ctors and write a factory method which removes the
+	/// need for selfptr()
 	boost::shared_ptr<Process> selfptr();
+	/// Todo - private ctors and write a factory method which removes the
+	/// need for selfptr()
 	void selfptr(boost::shared_ptr<Process> &p);
+	/// Associate a file with this process
 	void add_file(const FilePtr &file);
-	void print(std::ostream &os) const;
+	/// Retrieve the page_pool
 	const PagePoolPtr &page_pool();
+	/// Write some process info to the ostream
+	void print(std::ostream &os) const;
     private:
 	void remove_vdso_if_nopages();
 	boost::weak_ptr<Process> _selfptr;
@@ -341,14 +426,6 @@ namespace Exmap
 	std::list<MapPtr> restrict_maps_to_file(const FilePtr &file);
 	/// The ordered list of vmas read from /proc/xxx/maps.
 	std::list<VmaPtr> _vmas;
-
-	// Special handling for the one-page [vdso] vma. Depending on
-	// distro and kernel version, this may or may not return a
-	// page from /proc/exmap. It doesn't add any useful info, so
-	// we discard the vma. However, we want to error-trap bad
-	// addresses from /proc/exmap, so keep track of the discarded
-	// address to suppress the error.
-	Elf::Address _vdso_address;
 
 	/// The pid of this process.
 	pid_t _pid;
@@ -363,10 +440,11 @@ namespace Exmap
 	const PagePoolPtr &_page_pool;
     };
 
-    /// Wrap one complete memusage snapshot
+    /// Hold info about one complete snapshot of process info
     class Snapshot
     {
     public:
+	/// Ctor requires a source of info
 	Snapshot(SysInfoPtr &sys_info);
 	
 	/// Get a list of all processes in the snapshot.
@@ -419,11 +497,45 @@ namespace Exmap
     };
     typedef boost::shared_ptr<Snapshot> SnapshotPtr;
 
-};
+    /// Method class to wrap the (complex) calculation of maps within vmas
+    class MapCalculator
+    {
+	public:
+	    /// Init the calculator. The calculator is per-proc, per vma-list
+	    MapCalculator(const std::list<VmaPtr> &vmas,
+		    FilePoolPtr &file_pool,
+		    const ProcessPtr &proc);
 
+	    /// Do the calculation.
+	    bool calc_maps(std::list<MapPtr> &maps);
+	private:
+
+	    /// Calculate offset from segment virtual addresses to vma addrs
+	    Elf::Address get_seg_to_mem(const Elf::SegmentPtr &seg,
+		    const VmaPtr &vma);
+
+	    bool calc_maps_for_file(const std::string &fname);
+	    bool calc_maps_for_elf_file(const std::string &fname,
+		    const FilePtr &file);
+	    bool calc_maps_for_nonelf_file(const std::string &fname,
+		    const FilePtr &file);
+	    bool calc_map_for_seg(const FilePtr &file,
+		    const Elf::SegmentPtr &seg,
+		    std::list<VmaPtr> &vmas);
+	    bool add_holes();
+	    bool sanity_check(const std::list<MapPtr> &maps);
+	    void walk_vma_files();
+	    std::map<std::string, std::list<Exmap::VmaPtr> > _fname_to_vmas;
+
+	    std::list<VmaPtr> _vmas;
+	    FilePoolPtr _file_pool;
+	    const ProcessPtr _proc;
+	    std::list<MapPtr> _maps;
+    };
+
+};
 
 std::ostream &operator<<(std::ostream &os, const Exmap::Process &proc);
 std::ostream &operator<<(std::ostream &os, const Exmap::Map &map);
-
 
 #endif

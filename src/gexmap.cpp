@@ -154,13 +154,14 @@ namespace Gexmap
     };
 
     /// Abstract base class for the file and proc tabs
-    class ExmapTab : public Gtk::VBox
+    class ExmapTab : public Gtk::VPaned
     {
     public:
 	ExmapTab();
 	virtual void set_data(Exmap::SnapshotPtr &snapshot) = 0;
     protected:
-	
+	Gtk::VPaned _top_half;
+	Gtk::VPaned _bottom_half;
 	// Internal data
 	Exmap::SnapshotPtr _snapshot;
 
@@ -219,15 +220,15 @@ namespace Gexmap
     };
     
     /// The main, toplevel window
-    class Top : public Gtk::Window
+    class TopWin : public Gtk::Window
     {
     public:
-	Top(Exmap::SnapshotPtr &snapshot);
+	TopWin(Exmap::SnapshotPtr &snapshot);
+	static const int WIDTH = 800;
+	static const int HEIGHT = 600;
     private:
 	// Internal data
 	Exmap::SnapshotPtr _snapshot;
-	static const int WIDTH = 800;
-	static const int HEIGHT = 600;
 	// Widgets
 	ProcTab _proctab;
 	FileTab _filetab;
@@ -245,7 +246,7 @@ using namespace Gexmap;
 
 // ------------------------------------------------------------
 
-Top::Top(SnapshotPtr &snapshot)
+TopWin::TopWin(SnapshotPtr &snapshot)
     : _snapshot(snapshot)
 {
     add(_vbox);
@@ -707,6 +708,16 @@ void ElfSymbolList::set_data(const Exmap::ProcessPtr &proc,
 
 ExmapTab::ExmapTab()
 {
+    add1(_top_half);
+    add2(_bottom_half);
+
+    _bottom_half.add1(_sectionlist);
+    _bottom_half.add2(_symlist);
+
+    int height = TopWin::HEIGHT;
+    set_position(2 * height / 3);
+    _top_half.set_position(height / 3);
+    _bottom_half.set_position(height / 6);
 }
 
 // ------------------------------------------------------------
@@ -714,10 +725,11 @@ ExmapTab::ExmapTab()
 
 ProcTab::ProcTab()
 {
-    add(_allproclist);
-    add(_filelist);
-    add(_sectionlist);
-    add(_symlist);
+    _top_half.add1(_allproclist);
+    _top_half.add2(_filelist);
+
+    add1(_top_half);
+    add2(_bottom_half);
 
     _allproclist.listwin().get_selection()->signal_changed()
 	.connect(sigc::mem_fun(*this, &ProcTab::proclist_changed_cb));
@@ -779,10 +791,8 @@ void ProcTab::sectionlist_changed_cb()
 
 FileTab::FileTab()
 {
-    add(_allfilelist);
-    add(_proclist);
-    add(_sectionlist);
-    add(_symlist);
+    _top_half.add1(_allfilelist);
+    _top_half.add2(_proclist);
 
     _allfilelist.listwin().get_selection()->signal_changed()
     	.connect(sigc::mem_fun(*this, &FileTab::filelist_changed_cb));
@@ -854,10 +864,10 @@ int main(int argc, char *argv[])
 	return -1;
     }
 
-    Top top(snapshot);
+    TopWin topwin(snapshot);
     
     if (argc == 1) {
-	Gtk::Main::run(top);
+	Gtk::Main::run(topwin);
     }
 
     return 0;
