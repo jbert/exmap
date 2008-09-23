@@ -24,11 +24,13 @@ namespace Elf
     class Section;
     typedef boost::shared_ptr<Section> SectionPtr;
     
+    /// Hold information on a single ELF symbol
     class Symbol
     {
     public:
 	bool init(const std::string &data);
 	int size();
+	/// True if the symbol has a name and a non-zero value
 	bool is_defined();
 	bool is_func();
 	bool is_data();
@@ -45,6 +47,7 @@ namespace Elf
     };
     typedef boost::shared_ptr<Symbol> SymbolPtr;
     
+    /// Hold information on a single ELF section (program header)
     class Section
     {
     public:
@@ -75,6 +78,7 @@ namespace Elf
 	std::string _name;
     };
 
+    /// Hold information on a single ELF segment
     class Segment
     {
     public:
@@ -94,24 +98,43 @@ namespace Elf
     };
     typedef boost::shared_ptr<Segment> SegmentPtr;
     
+    /// Hold information on a single ELF file
     class File
     {
     public:
 	File();
+	/// Load information from the specified file. Returns false if not
+	/// an elf file (or does not exist). Will also warn unless
+	/// 'warn_if_non_elf' is false.
 	bool load(const std::string &fname, bool warn_if_non_elf = true);
+	/// List of symbols in the given virtual memory range
 	std::list<SymbolPtr> find_symbols_in_mem_range(const RangePtr &mrange);
+	/// List of symbols for which is_defined is true
 	std::list<SymbolPtr> defined_symbols();
+	/// List of all symbols
 	std::list<SymbolPtr> all_symbols();
+	/// Find the symbol for a given name (null if we don't have it)
 	SymbolPtr symbol(const std::string &symname);
+	/// List of symbols in a given ELF section
 	std::list<SymbolPtr> symbols_in_section(const SectionPtr &section);
+	/// The underlying filename
 	std::string filename();
+	/// Number of ELF sections
 	int num_sections();
+	/// Number of ELF segments
 	int num_segments();
+	/// List of segments
 	std::list<SegmentPtr> segments();
+	/// List of segments which are of type PT_LOAD (i.e. those which
+	/// are mapped into memory when the ELF file is loaded by the system)
 	std::list<SegmentPtr> loadable_segments();
+	/// Get segment by index number
 	SectionPtr section(int i);
+	/// Get segment by name
 	SectionPtr section(const std::string &name);
+	/// List of sections which appear in the elf memory image
 	std::list<SectionPtr> mappable_sections();
+	/// List of all sections
 	std::list<SectionPtr> sections();
 	/// Returns the e_type value. See elf.h
 	int elf_file_type();
@@ -119,12 +142,6 @@ namespace Elf
 	bool is_executable();
 	/// Syntactic sugar for elf_file_type() == ET_DYN
 	bool is_shared_object();
-	static bool load_table(std::istream &is,
-			       const std::string &table_name,
-			       Elf32_Off offset,
-			       Elf32_Half num_chunks,
-			       Elf32_Half chunksize,
-			       std::list<std::string> &entries);
     private:
 	bool lazy_load_sections();
 	void unload();

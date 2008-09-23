@@ -1,8 +1,15 @@
 CXX=g++
 LD=g++
 JUTILDIR=../jutil
-CXXFLAGS=`pkg-config --cflags gtkmm-2.4` -g -Wall -Werror -I$(JUTILDIR)
-LDFLAGS=`pkg-config --libs gtkmm-2.4` -lpcre -ljutil -L$(JUTILDIR)
+CXXFLAGS += `pkg-config --cflags gtkmm-2.4` -g -Wall -Werror -I$(JUTILDIR)
+LDFLAGS += `pkg-config --libs gtkmm-2.4` -lpcre -ljutil -L$(JUTILDIR)
+
+#CXXFLAGS += -pg
+#LDFLAGS += -pg
+
+# For coverage testing
+# CXXFLAGS += -fprofile-arcs -ftest-coverage
+# LDFLAGS += -lgcov
 
 EXMAP_OBJ=Exmap.o Range.o Elf.o
 
@@ -15,6 +22,14 @@ EXES += gexmap
 CL_OBJ =  exmtool.o $(EXMAP_OBJ)
 OBJS += $(CL_OBJ)
 EXES += exmtool
+
+ET_OBJ = elftool.o Elf.o Range.o
+OBJS += $(ET_OBJ)
+EXES += elftool
+
+SP_OBJ = showproc.o $(EXMAP_OBJ)
+OBJS += $(SP_OBJ)
+EXES += showproc
 
 # ------------------------------------------------------------
 
@@ -44,7 +59,7 @@ EXES += $(TESTS)
 
 EXTRA_DEL_FILES += *~
 
-build: $(EXES) $(SHLIBS) TAGS
+build: $(EXES) $(SHLIBS)
 
 TAGS:
 	etags *.cpp *.hpp
@@ -61,6 +76,12 @@ gexmap: $(GEM_OBJ)
 
 exmtool: $(CL_OBJ)
 	$(LD) -o exmtool $(CL_OBJ) $(LDFLAGS) 
+
+elftool: $(ET_OBJ)
+	$(LD) -o elftool $(ET_OBJ) $(LDFLAGS) 
+
+showproc: $(SP_OBJ)
+	$(LD) -o showproc $(SP_OBJ) $(LDFLAGS) 
 
 t_range: $(TR_OBJ)
 	$(LD) -o t_range $(TR_OBJ) $(LDFLAGS) 

@@ -92,16 +92,25 @@ bool ExmapTest::run()
     ok(!allprocs.empty(), "can get a list of procs");
     list<ProcessPtr>::iterator proc_it;
     list<ProcessPtr> procs;
+
+    bool failed_to_get_sizes = false;
+    SizesPtr sizes;
     for (proc_it = allprocs.begin(); proc_it != allprocs.end(); ++proc_it) {
 	string cmdline = (*proc_it)->cmdline();
 	if (cmdline== SA_EXE) {
 	    procs.push_back(*proc_it);
 	}
+	sizes = (*proc_it)->sizes();
+	if (!sizes) {
+	    failed_to_get_sizes = true;
+	}
     }
+    ok(!failed_to_get_sizes, "can get sizes for every proc");
+
     is((int) procs.size(), NUM_INSTANCES, "can find all our sharedarray procs");
 
     ProcessPtr proc = procs.front();
-    SizesPtr sizes = proc->sizes();
+    sizes = proc->sizes();
     ok(sizes->val(Sizes::VM) > NUM_ARRAYS * ARRAY_SIZE, "image is big enough");
 
     double ps_size = get_pid_size_from_ps(proc->pid());
@@ -129,12 +138,18 @@ bool ExmapTest::run()
 
     Regexp re;
     re.compile(SA_LIB + "$");
+    failed_to_get_sizes = false;
     for (file_it = all_files.begin(); file_it != all_files.end(); ++file_it) {
 	string name = (*file_it)->name();
 	if (re.matches(name)) {
 	    files.push_back(*file_it);
 	}
+	sizes = (*file_it)->sizes();
+	if (!sizes) {
+	    failed_to_get_sizes = true;
+	}
     }
+    ok(!failed_to_get_sizes, "can get sizes for every file");
     is((int) files.size(), 1, "file only listed once");
     FilePtr file = files.front();
     ok(file->is_elf(), "file recognised as elf file");
@@ -335,7 +350,7 @@ bool ExmapTest::run()
 
 bool ExmapTest::setup()
 {
-    plan(194);
+    plan(196);
     
     const string ld_path_env = "LD_LIBRARY_PATH";
     const char *cp = getenv(ld_path_env.c_str());
@@ -355,7 +370,10 @@ bool ExmapTest::setup()
 	ok(fp, "can start instance of " + MI_EXE);
 	_popen_handles.push_back(fp);
     }
-    
+
+    /* let subprocs get ahead. racy. */
+    sleep(1);
+
     return true;
 }
 

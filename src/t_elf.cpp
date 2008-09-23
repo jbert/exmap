@@ -29,7 +29,7 @@ using namespace Pcre;
 
 bool ElfTest::run()
 {
-    plan(92);
+    plan(110);
 
     Elf::File e;
 
@@ -37,6 +37,9 @@ bool ElfTest::run()
     const string nonelf("/etc/motd");
     ok(jutil::file_exists(nonelf), "nonelf file exists");
     notok(e.load(nonelf), "can't load existing non-elf file");
+    const string exist_but_noprivs("/etc/shadow");
+    ok(jutil::file_exists(exist_but_noprivs), "file exists");
+    notok(e.load(exist_but_noprivs), "can't load existing non-privs file");
        
     map<string, struct testdat>::iterator it;
     for (it = _testdat.begin(); it != _testdat.end(); ++it) {
@@ -45,6 +48,7 @@ bool ElfTest::run()
 	list<string> section_lines, lines;
 	
 	ok(e.load(fname), "can load file " + fname);
+	is(e.filename(), fname, "has correct name");
 	is(e.elf_file_type(), td->type, "file " + fname + " correct elf type");
 	is(e.is_executable(), td->is_exe, "file is_exe correct");
 
@@ -157,6 +161,22 @@ bool ElfTest::run()
 	    ok(sym_it == syms.end(), "didn't find main in text section");
 	}
     }
+
+    ok(Elf::PAGE_SIZE > 0, "check we have a sane page size");
+    is((int) Elf::page_align_down(Elf::PAGE_SIZE), Elf::PAGE_SIZE, "pad 1");
+    is((int) Elf::page_align_down(Elf::PAGE_SIZE-1), 0, "pad 2");
+    is((int) Elf::page_align_down(Elf::PAGE_SIZE+1), Elf::PAGE_SIZE, "pad 3");
+    is((int) Elf::page_align_down(2*Elf::PAGE_SIZE), 2*Elf::PAGE_SIZE, "pad 4");
+    is((int) Elf::page_align_down(2*Elf::PAGE_SIZE-1), Elf::PAGE_SIZE, "pad 5");
+    is((int) Elf::page_align_down(2*Elf::PAGE_SIZE+1), 2*Elf::PAGE_SIZE,
+	    "pad 6");
+    
+    is((int) Elf::page_align_up(Elf::PAGE_SIZE), Elf::PAGE_SIZE, "pad 1");
+    is((int) Elf::page_align_up(Elf::PAGE_SIZE-1), Elf::PAGE_SIZE, "pad 2");
+    is((int) Elf::page_align_up(Elf::PAGE_SIZE+1), 2*Elf::PAGE_SIZE, "pad 3");
+    is((int) Elf::page_align_up(2*Elf::PAGE_SIZE), 2*Elf::PAGE_SIZE, "pad 4");
+    is((int) Elf::page_align_up(2*Elf::PAGE_SIZE-1), 2*Elf::PAGE_SIZE, "pad 5");
+    is((int) Elf::page_align_up(2*Elf::PAGE_SIZE+1), 3*Elf::PAGE_SIZE, "pad 6");
     
     return true;
 }

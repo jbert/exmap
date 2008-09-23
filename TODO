@@ -1,11 +1,22 @@
 For 0.8.1
 =========
 
+- (re-)test on FC4
+
+DONE - fix FC4 bug
+	DONE - after adding test case
+
+- add coverage testing support to makefile
+	- better Exmap coverage
+	- 	mkdir -p ./coverage
+	lcov --directory $STAP_OBJ --zerocounters
+	runtest --tool=systemtap
+	lcov --directory $STAP_OBJ --capture --output-file ./coverage/stap.info
+	genhtml -o ./coverage ./coverage/stap.info
+
 NO - make 'prefix' part of jutil stream
 	- and make an RAII-like object to set and clear it per func
 	    - defaults to setting/unsetting both warn and debug
-
-- test on FC4
 
 DONE - make jutil streams run-time enable-able
   - so can turn on debug
