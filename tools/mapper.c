@@ -8,6 +8,10 @@
 #include <stdio.h>
 #include <sys/user.h> /* For PAGE_SIZE */
 
+#ifndef PAGE_SIZE
+#define PAGE_SIZE (4096)
+#endif
+
 enum MapType {
      PRIVATE,
      SHARED
