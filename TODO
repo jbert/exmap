@@ -36,6 +36,7 @@ measures, which items)
 	- maybe additional info from kernel module?
 
 - support earlier kernel versions (no pud_t. See mail from Joaquim)
+	- also need to worry about [vdso] name
 
 - is there a way to avoid the sysread/seek for each string name in ELF?
 	- maybe read the string table in chunks?

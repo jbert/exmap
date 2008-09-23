@@ -129,8 +129,9 @@ use base qw/Exmap::Progress/;
 sub number_of_ticks
 {
     my $s = shift;
-    my $nticks = shift;
-    print "Number of procs: $nticks\n";
+    $s->{_total_ticks} = shift;
+    $s->{_this_tick} = 0;
+    print "Number of procs: $s->{_total_ticks}\n";
     return 1;
 }
 
@@ -138,7 +139,9 @@ sub tick
 {
     my $s = shift;
     my $text = shift;
-    print $text, "\n";
+    my $digits = length $s->{_total_ticks};
+    my $tick = sprintf("%0${digits}d", ++$s->{_this_tick});
+    print "$tick/$s->{_total_ticks}: Loaded: $text\n";
     return 1;
 }
 

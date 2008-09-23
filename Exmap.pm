@@ -199,7 +199,7 @@ sub _calculate_file_mappings
     foreach my $proc ($s->procs) {
 	warn("Failed to process maps for pid ", $proc->pid)
 	    unless $proc->_calc_vma_maps($s->file_pool);
-	$progress->tick("Loaded " . $proc->pid . ": " . $proc->cmdline)
+	$progress->tick($proc->pid . ": " . $proc->cmdline)
 	    if $progress;
     }
     return scalar $s->files;
@@ -267,7 +267,7 @@ sub load
     my $s = shift;
     my $page_pool = shift;
     my $test_exmap_file = shift; # Or undef for the real exmap
-    
+
     unless ($s->_load_vmas($page_pool)) {
 	warn "Can't load vmas for " . $s->pid;
 	return undef;
@@ -492,9 +492,9 @@ sub _load_page_info
 	}
 	print E $s->pid, "\n";
     }
-    
 
     my $current_vma;
+    my $page_cookie;
     my ($pfn, $swap_entry, $line);
     while ($line = <E>) {
 	# Lines are either:
@@ -517,7 +517,7 @@ sub _load_page_info
 	    $current_vma = $vma;
 	}
 	else {
-	    my $page_cookie = Exmap::Page::line_to_cookie($line);
+	    $page_cookie = Exmap::Page::line_to_cookie($line);
 	    $current_vma->add_page($page_cookie);
 	}
     }

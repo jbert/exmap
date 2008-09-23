@@ -44,8 +44,8 @@ sub new
     return undef unless $s->_open_file;
     return undef unless $s->_load_file_header;
     return undef unless $s->_load_segments;
-    return undef unless $s->_load_sections;
-    return undef unless $s->_correlate;
+#    return undef unless $s->_load_sections;
+#    return undef unless $s->_correlate;
     return $s;
 }
 
@@ -97,6 +97,15 @@ sub DESTROY
     }
 }
 
+sub _lazy_load_sections
+{
+    my $s = shift;
+    return 1 if $s->{_lazy_load_sections};
+    $s->{_lazy_load_sections} = 1; # Stop possible recursion...
+    return undef unless $s->_load_sections;
+    return undef unless $s->_correlate;
+    return 1;
+}
 
 sub _correlate
 {
@@ -121,6 +130,7 @@ sub _correlate
 	if ($section->is_symbol_table) {
 	    $s->{_symbol_table_section} = $section;
 	    my $symbol_string_table = $s->section($section->link);
+	    # Now load on demand
 	    $section->load_symbols($symbol_string_table);
 	}
     }
@@ -132,6 +142,8 @@ sub find_symbols_in_mem_range
 {
     my $s = shift;
     my $r = shift;
+
+    $s->_lazy_load_sections;
 
     my $symtab = $s->{_symbol_table_section};
     return () unless $symtab;
@@ -148,6 +160,9 @@ sub defined_symbols
 sub all_symbols
 {
     my $s = shift;
+
+    $s->_lazy_load_sections;
+
     my $symtab = $s->{_symbol_table_section};
     return () unless $symtab;
     return $symtab->symbols;
@@ -166,29 +181,14 @@ sub symbol_by_name
 sub symbols_in_section
 {
     my $s = shift;
+
+    $s->_lazy_load_sections;
+
     my $section = shift;
     return $s->find_symbols_in_mem_range($section->mem_range);
 }
 
 sub file { return $_[0]->{_file}; }
-
-# This measure corresponds to the 'maplength' var in dl-load.c in glibc.
-# It is the end of the last loadable segment's virt addr minus the start
-# of the first loadable segments virt addr.
-
-# maplength = loadcmds[nloadcmds - 1].allocend - c->mapstart;
-# c->mapstart = ph->p_vaddr & ~(GLRO(dl_pagesize) - 1);
-# c->allocend = ph->p_vaddr + ph->p_memsz;
-sub maplength
-{
-    my $s = shift;
-    my @segs = $s->loadable_segments;
-    return undef unless @segs;
-
-    my $first_mapstart = page_align_down($segs[0]->vaddr);
-    my $last_allocend = $segs[-1]->vaddr + $segs[-1]->mem_size;
-    return $last_allocend - $first_mapstart;
-}
 
 =pod
 
@@ -338,7 +338,13 @@ sub num_segments
     return scalar $s->segments;
 }
 
-sub segments { return @{$_[0]->{_segments}}; }
+sub segments
+{
+    my $s = shift;
+
+    return @{$s->{_segments}};
+}
+
 sub loadable_segments
 {
     my $s = shift;
@@ -349,14 +355,15 @@ sub section
 {
     my $s = shift;
     my $index = shift;
-    return ${$s->{_sections}}[$index];
+    my @sections = $s->sections;
+    return $sections[$index];
 }
 
 sub section_by_name
 {
     my $s = shift;
     my $name = shift;
-    foreach my $section (@{$s->{_sections}}) {
+    foreach my $section ($s->sections) {
 	return $section if $section->name eq $name;
     }
     return undef;
@@ -371,6 +378,9 @@ sub mappable_sections
 sub sections
 {
     my $s = shift;
+
+    $s->_lazy_load_sections;
+
     return @{$s->{_sections}};
 }
 
@@ -566,7 +576,7 @@ sub find_string
 sub symbols
 {
     my $s = shift;
-    return () unless $s->{_sorted_symbol_table};
+    $s->load_symbols unless $s->{_sorted_symbol_table};
     return @{$s->{_sorted_symbol_table}};
 }
 
@@ -576,8 +586,7 @@ sub find_symbols_in_mem_range
     my $r = shift;
 
     my @symbols;
-    my $symtab = $s->{_sorted_symbol_table};
-    foreach my $symbol (@$symtab) {
+    foreach my $symbol ($s->symbols) {
 	push @symbols, $symbol
 	    if $symbol->is_defined && $r->overlaps($symbol->range);
     }
@@ -603,7 +612,9 @@ sub load_symbols
 
     my @symbols;
     seek($s->{_fh}, $s->{_offset}, 0);
-    for ($read_size = 0; $read_size < $total_size; $read_size += $symentry_size) {
+    for ($read_size = 0;
+	 $read_size < $total_size;
+	 $read_size += $symentry_size) {
 	my $nbytes = sysread($s->{_fh}, $buffer, $symentry_size);
 	if ($nbytes != $symentry_size) {
 	    warn("Failed to read symbol table entry");
