@@ -911,8 +911,11 @@ SizesPtr Map::sum_sizes(const PagePoolPtr &pp,
     SizesPtr sizes(new Sizes);
     list<MapPtr>::const_iterator map_it;
     for (map_it = maps.begin(); map_it != maps.end(); ++map_it) {
-	SizesPtr subsizes = (*map_it)->sizes_for_mem_range(pp);
-	sizes->add(subsizes);
+        SizesPtr subsizes = (*map_it)->sizes_for_mem_range(pp);
+        if (subsizes)
+        {
+            sizes->add(subsizes);
+        }
     }
     return sizes;
 }
