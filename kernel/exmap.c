@@ -507,7 +507,7 @@ int init_module ()
 							NULL);
 
 	if (exmap_proc_file == NULL) {
-		remove_proc_entry (PROCFS_NAME, &proc_root);
+		remove_proc_entry (PROCFS_NAME, NULL);
 		printk (KERN_ALERT "/proc/%s: could not initialize\n",
 			PROCFS_NAME);
 		return -ENOMEM;
@@ -532,5 +532,5 @@ int init_module ()
 void cleanup_module ()
 {
 	printk (KERN_INFO "/proc/%s: remove\n", PROCFS_NAME);
-	remove_proc_entry (PROCFS_NAME, &proc_root);
+	remove_proc_entry (PROCFS_NAME, NULL);
 }
