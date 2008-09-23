@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <alloca.h>
 #include <string.h>
+#include <unistd.h>
 
 #define FILE_SIZE (4096 * 20)
 

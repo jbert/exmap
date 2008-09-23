@@ -236,6 +236,7 @@ sub _init
     my $s = shift;
     $s->{_pid} = shift;
     $s->{_exe_name} = readlink "/proc/$s->{_pid}/exe";
+    $s->{_cmdline} = `cat /proc/$s->{_pid}/cmdline`;
     return $s;
 }
 
@@ -250,6 +251,7 @@ sub load
 
 sub pid { return $_[0]->{_pid}; }
 sub exe_name { return $_[0]->{_exe_name}; }
+sub cmdline { return $_[0]->{_cmdline}; }
 sub _vmas { return @{$_[0]->{_vmas}}; }
 sub maps { return @{$_[0]->{_maps}}; }
 sub files { return @{$_[0]->{_files}}; }
@@ -452,7 +454,7 @@ sub _load_vmas
 	    warn("Can't create VMA for line $line");
 	    next;
 	}
-	push @vmas, $vma unless $vma->is_vdso;
+	push @vmas, $vma;
     }
     $s->{_vmas} = \@vmas;
     
@@ -794,16 +796,6 @@ sub info
     return $s->{_info}->{$key};
 }
 
-# Newer kernels have an unreadable page at 0xfffe000. We want to exclude
-# this from most calculations.
-sub is_vdso
-{
-    my $s = shift;
-    return $s->info('file') eq VDSO_NAME
-	|| ($s->info('hex_start') eq "ffffe000"
-	    && $s->info('hex_end') eq "fffff000");
-}
-
 sub add_page
 {
     my $s = shift;
@@ -837,6 +829,11 @@ sub _addr_to_pgnum
     my $s = shift;
     my $addr = shift;
 
+    if ($addr >= $s->info('end')) {
+	warn("$addr is beyond vma end " . $s->info('end'));
+	return undef;
+    }
+    
     my $pgnum = Elf::page_align_down($addr);
     $pgnum -= $s->info('start');
     if ($pgnum < 0) {
@@ -844,11 +841,11 @@ sub _addr_to_pgnum
 	return undef;
     }
     $pgnum /= Elf::PAGE_SIZE;
-    if ($pgnum >= scalar @{$s->{_pfns}}) {
-	warn("$addr is beyond vma end " . $s->info('end')
-	     . " ($pgnum >= " . scalar @{$s->{_pfns}});
-	return undef;
-    }
+
+    # The '[vdso]' region doesn't show up in the Exmap output.
+    # Hack in a placeholder here for absent pages.
+    # TODO - make this hack vdso specific
+    $s->{_pfns}->[$pgnum] ||= 0;
     
     return $pgnum;
 }

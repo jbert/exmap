@@ -1,3 +1,16 @@
+Release 0.5.1: 4/11/2005
+========================
+
+Update following 0.5 feedback:
+
+- pre-sort lists by effective size (descending)
+
+- add 'cmdline' column for KDE (the have kdeinit as the exe for all procs)
+
+- don't strip out [vdso], it seems to cause problems on Fedora and amd64
+
+- fix -Wall errors for userland .c files	
+	
 Release 0.5: 4/11/2005
 ======================
 

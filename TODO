@@ -1,3 +1,21 @@
+- two digit accuracy on kbyte
+
+DONE - sort by effective size
+	- reorder to effective first?
+
+DONE - -Wall -Werror
+
+DONE - Most KDE processes are shown as /opt/kde3/bin/kdeinit here, because
+of the kdeinit hack. However with recent kernel versions top shows
+them as e.g. kwrite instead of kdeinit. I'm not quite sure how that's
+done though.
+
+DONE - The UI tool could either default to downwards sorting by effective
+memory or even better save the sorting. I always have to double-click
+the column in all views to have them sorted in the IMHO best way.
+
+- update Makefile with 'normal CFLAGS'. Perhaps -fPIC for all?	
+
 - command line tool (to help reduce mem foorprint)
 
 - build a gnome2 and look for mem hogs :-)

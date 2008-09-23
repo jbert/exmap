@@ -1,3 +1,6 @@
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <sys/mman.h> /* For mmap() */
 #include <sys/fcntl.h> /* For open flags */
 #include <unistd.h> /* For getopt */

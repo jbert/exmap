@@ -238,6 +238,11 @@ sub _init_windows
     my $listwin = Gtk2::SimpleList->new($s->_columns);
     $s->list_window($listwin);
     $s->_make_all_sortable;
+    my $ssc = $s->_start_sort_col;
+    if (defined $ssc) {
+	my $model = $s->list_window->get_model;
+	$model->set_sort_column_id($ssc, 'descending');
+    }
     $s->_make_all_resizable;
     # Can't make it work :-(
 #    $s->_add_tooltips;
@@ -249,6 +254,11 @@ sub _init_windows
     $s->window($scr_list);
 
     return 1;
+}
+
+sub _start_sort_col
+{
+    return undef;
 }
 
 sub _register_hidden_column
@@ -347,11 +357,16 @@ use constant BYTES_PER_KBYTE => 1024;
 sub _columns
 {
     return (PID => 'int',
-	    Exe => 'text',
+	    Cmdline => 'text',
 	    'Size (K)' => 'double',
 	    'Mapped (K)' => 'double',
 	    'Effective (K)' => 'double',
 	   );
+}
+
+sub _start_sort_col
+{
+    return 4;
 }
 
 # Per-column tooltip text, in order. Needs to be kept in sync with _columns
@@ -373,7 +388,7 @@ sub update_view
     @{$lw->{data}} = map {
 	[
 	 $_->pid,
-	 $_->exe_name,
+	 $_->cmdline,
 	 $_->vm_size / BYTES_PER_KBYTE,
 	 $_->mapped_size / BYTES_PER_KBYTE,
 	 $_->effective_size  / BYTES_PER_KBYTE,
@@ -396,6 +411,11 @@ sub _columns
 	    'Mapped (K)' => 'double',
 	    'Effective (K)' => 'double',
 	   );
+}
+
+sub _start_sort_col
+{
+    return 4;
 }
 
 sub update_view
@@ -430,6 +450,11 @@ sub _columns
 	   );
 }
 
+sub _start_sort_col
+{
+    return 3;
+}
+
 sub update_view
 {
     my $s = shift;
@@ -460,11 +485,17 @@ use constant BYTES_PER_KBYTE => 1024;
 sub _columns
 {
     return (PID => 'int',
+	    Cmdline => 'text',
 	    Exe => 'text',
 	    'Size (K)' => 'double',
 	    'Mapped (K)' => 'double',
 	    'Effective (K)' => 'double',
 	   );
+}
+
+sub _start_sort_col
+{
+    return 5;
 }
 
 sub update_view
@@ -479,6 +510,7 @@ sub update_view
     @{$lw->{data}} = map {
 	[
 	 $_->pid,
+	 $_->cmdline,
 	 $_->exe_name,
 	 $_->vm_size($file) / BYTES_PER_KBYTE,
 	 $_->mapped_size($file) / BYTES_PER_KBYTE,
@@ -511,6 +543,11 @@ sub _columns
 	    'Mapped Size' => 'int',
 	    'Effective Size' => 'int',
 	   );
+}
+
+sub _start_sort_col
+{
+    return 4;
 }
 
 sub file
@@ -563,6 +600,11 @@ sub _columns
 	    'Mapped Size' => 'int',
 	    'Effective Size' => 'int',
 	   );
+}
+
+sub _start_sort_col
+{
+    return 3;
 }
 
 sub register_section_list
