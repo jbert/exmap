@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 use strict;
 use warnings;
-use Test::More tests => 30;
+use Test::More tests => 29;
 
 use_ok('Exmap');
 
@@ -39,7 +39,7 @@ ok($proc->vm_size > $NUM_ARRAYS * $ARRAY_SIZE, "image is big enough");
 my $ps_size = get_pid_size_from_ps($proc->pid);
 is($proc->vm_size, $ps_size, "exmap info matches ps output");
 
-ok($exmap->load_page_info, "can load page info");
+#ok($exmap->load_page_info, "can load page info");
 
 my $mapped_size = $proc->mapped_size;
 my $effective_size = $proc->effective_size;

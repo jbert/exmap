@@ -378,6 +378,7 @@ int setup_from_pid(pid_t pid)
 			PROCFS_NAME, pid);
 		goto Exit;
 	}
+	down_read(&mm->mmap_sem);
 	spin_lock(&mm->page_table_lock);
 
 	if ((errcode = store_vmalist_info(mm->mmap)) < 0) {
@@ -392,8 +393,9 @@ Exit:
 	/* always release the mm (and page table lock) if we have
 	 * acquired them
 	 */
-	if (mm && spin_is_locked(&mm->page_table_lock)) {
+	if (mm) {
 		spin_unlock(&mm->page_table_lock);
+		up_read(&mm->mmap_sem);
 	}
 	if (mm != NULL) {
 	     mmput(mm);

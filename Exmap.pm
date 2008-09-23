@@ -10,6 +10,7 @@ my %PAGE_POOL;
 sub clear_page_pool
 {
     %PAGE_POOL = ();
+#    print "C:\n";
 }
 
 sub register_page_in_pool
@@ -20,8 +21,9 @@ sub register_page_in_pool
     $PAGE_POOL{$page} ||= [];
     push @{$PAGE_POOL{$page}}, $vma;
 
-#    print "R: $page: ".scalar @{$PAGE_POOL{$page}}." [".
-#    scalar (keys %PAGE_POOL)."]\n";
+#    print "R: $page: "
+#	.scalar @{$PAGE_POOL{$page}}." ["
+#	.scalar (keys %PAGE_POOL)."]\n";
 }
 
 sub page_pool_count
@@ -31,12 +33,14 @@ sub page_pool_count
     
 #    print "L: $page: ".join(':', @$vmas)." size ".scalar(@$vmas)."\n";
     
-    warn("Unregisterd page $page") unless $vmas;
+    warn("Unregistered page $page") unless $vmas;
     return scalar @$vmas;
 }
 
 # ------------------------------------------------------------
-package Exmap;
+package Obj;
+
+my $LIFETIME_DEBUG = 0;
 
 sub new
 {
@@ -44,6 +48,23 @@ sub new
     $c = ref $c if ref $c;
     my $s = {};
     bless $s, $c;
+    print "C: $s\n" if $LIFETIME_DEBUG;
+    return $s->_init(@_);
+}
+
+sub DESTROY
+{
+    my $s = shift;
+    print "D: $s\n" if $LIFETIME_DEBUG;
+}
+
+# ------------------------------------------------------------
+package Exmap;
+use base qw/Obj/;
+
+sub _init
+{
+    my $s = shift;
     $s->{_procs} = [];
     $s->{_pid_to_proc} = {};
     return $s;
@@ -53,6 +74,8 @@ sub load_procs
 {
     my $s = shift;
 
+    PagePool::clear_page_pool();
+    
     # Don't monitor ourselves, our VMAs etc will change too much as we run
     my @pids = grep { $_ != $$ } $s->_readable_pids();
     my @procs = grep { defined $_ } map { Process->new($_); } @pids;
@@ -61,6 +84,7 @@ sub load_procs
     $s->{_pid_to_proc} = { map { $_->pid => $_ } @procs };
 
     $s->_find_files;
+    $s->_calculate_effective;
     
     return scalar @procs;
 }
@@ -89,22 +113,13 @@ sub _find_files
 	return undef;
     }
 
-    $s->{_files} = [ values %unique_files ];
-    return scalar @{$s->{_files}};
+    $s->{_files} = \%unique_files;
+    return scalar keys %unique_files;
 }
 
-sub load_page_info
+sub _calculate_effective
 {
     my $s = shift;
-
-    # Higher order programming. Dontcha love it?
-#    my $vma_register_subref = sub {
-#	my $exmap = shift;
-#	my $proc = shift;
-#	my $vma = shift;
-#	return 1 if $vma->is_vdso;
-#	$vma->_register_pages($proc);
-#    };
 
     my $update_effective_subref = sub {
 	my $exmap = shift;
@@ -114,23 +129,6 @@ sub load_page_info
 
 	$vma->_update_effective_count;
     };
-
-    # Start from scratch
-    PagePool::clear_page_pool();
-
-    # Find all the pages first
-    foreach my $proc ($s->procs) {
-	unless ($proc->load_page_info) {
-	    warn("Failed to load page into for pid: ", $proc->pid, "\n");
-	    return undef;
-	}
-    }
-    
-#    unless ($s->_walk_proc_vmas($vma_register_subref)) {
-#	warn("Failed to walk vmas to register pages");
-#	return undef;
-#    }
-    
     # And then work out the sharing
     unless ($s->_walk_proc_vmas($update_effective_subref)) {
 	warn("Failed to walk vmas to update effective counts");
@@ -172,13 +170,27 @@ sub total_pages
 }
 
 sub procs { return @{$_[0]->{_procs}}; }
-sub files { return @{$_[0]->{_files}}; }
+sub files { return values %{$_[0]->{_files}}; }
 sub elf_files { return grep { $_->is_elf } $_[0]->files; }
 
 sub pids
 {
     my $s = shift;
     return keys %{$s->{_pid_to_proc}};
+}
+
+sub pid_to_proc
+{
+    my $s = shift;
+    my $pid = shift;
+    return $s->{_pid_to_proc}->{$pid};
+}
+
+sub name_to_file
+{
+    my $s = shift;
+    my $fname = shift;
+    return $s->{_files}->{$fname};
 }
 
 sub num_procs
@@ -203,17 +215,16 @@ sub _readable_pids
 
 # ------------------------------------------------------------
 package Process;
+use base qw/Obj/;
 
 use constant EXMAP_FILE => "/proc/exmap";
 
-sub new
+sub _init
 {
-    my $c = shift;
-    $c = ref $c if ref $c;
-    my $s = {};
-    bless $s, $c;
+    my $s = shift;
     $s->{_pid} = shift;
     $s->_load_maps or return undef;
+    $s->_load_page_info or return undef;
     $s->_calculate or return undef;
     return $s;
 }
@@ -221,7 +232,7 @@ sub new
 sub pid { return $_[0]->{_pid}; }
 sub exe_name { return $_[0]->{_exe_name}; }
 sub vmas { return @{$_[0]->{_vmas}}; }
-sub files { return @{$_[0]->{_files}}; }
+sub filenames { return @{$_[0]->{_fnames}}; }
 
 sub owns_vma
 {
@@ -259,7 +270,7 @@ sub _load_maps
     return $s;
 }
 
-sub load_page_info
+sub _load_page_info
 {
     my $s = shift;
 
@@ -334,23 +345,27 @@ sub _calculate
     # First VMA maps the exe
     $s->{_exe_name} = $vmas[0]->info('file');
 
-    my %unique_files;
+    my %unique_fnames;
     foreach my $vma (@vmas) {
-	$unique_files{$vma->info('file')}++;
+	$unique_fnames{$vma->info('file')}++;
     }
 
-    $s->{_files} = [ keys %unique_files ];
+    $s->{_fnames} = [ keys %unique_fnames ];
     return 1;
 }
 
-sub _sum_vma_info
+sub _sum_vma_info_over_file_or_all
 {
     my $s = shift;
     my $key = shift;
+    my $file = shift;
+    
     my $total = 0;
     foreach my $vma ($s->vmas) {
 	# Ignore the pseudo-page if present
 	next if $vma->is_vdso;
+	# Ignore the vma if we are narrowing to a specific file
+	next if ($file && $vma->info('file') ne $file->name);
 	my $val = $vma->info($key);
 	die("undefined val for $key in $vma") unless defined $val;
 	$total += $val;
@@ -361,33 +376,34 @@ sub _sum_vma_info
 sub vm_size
 {
     my $s = shift;
-    return $s->_sum_vma_info('vm_size');
+    my $file = shift;
+    return $s->_sum_vma_info_over_file_or_all('vm_size', $file);
 }
 
 sub mapped_size
 {
     my $s = shift;
-    return $s->_sum_vma_info('mapped_size');
+    my $file = shift;
+    return $s->_sum_vma_info_over_file_or_all('mapped_size', $file);
 }
 
 sub effective_size
 {
     my $s = shift;
-    return $s->_sum_vma_info('effective_size');
+    my $file = shift;
+    return $s->_sum_vma_info_over_file_or_all('effective_size', $file);
 }
 
 # ------------------------------------------------------------
 package Vma;
+use base qw/Obj/;
 
 use constant ANON_NAME => "[anon]";
 use constant PAGE_SIZE => 4096;
 
-sub new
+sub _init
 {
-    my $c = shift;
-    $c = ref $c if ref $c;
-    my $s = {};
-    bless $s, $c;
+    my $s = shift;
     $s->{_line} = shift;
     $s->_parse_line or return undef;
     $s->_calculate_info or return undef;
@@ -486,15 +502,14 @@ sub _update_effective_count
 
 # ------------------------------------------------------------
 package File;
+use base qw/Obj/;
 
-sub new
+sub _init
 {
-    my $c = shift;
-    $c = ref $c if ref $c;
-    my $s = {};
-    bless $s, $c;
+    my $s = shift;
     $s->{_name} = shift;
     $s->{_vmas} = [];
+    $s->{_procs} = [];
     if (-f $s->name) {
 	$s->{_elf} = Elf->new($s->name,
 			      1); # Suppress warning if not elf
@@ -521,7 +536,8 @@ sub add_vma
     my $s = shift;
     my $vma = shift;
     
-    push @{$s->{_vmas}}, $vma;
+    my %unique = map { $_ => 1 } $s->vmas;
+    push @{$s->{_vmas}}, $vma unless $unique{$vma};
     return 1;
 }
 
@@ -529,8 +545,10 @@ sub add_proc
 {
     my $s = shift;
     my $proc = shift;
+
+    my %unique = map { $_ => 1 } $s->procs;
+    push @{$s->{_procs}}, $proc unless $unique{$proc};
     
-    push @{$s->{_procs}}, $proc;
     return 1;
 }
 

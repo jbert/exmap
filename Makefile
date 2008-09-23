@@ -2,7 +2,6 @@
 obj-m += exmap.o
 #EXTRA_CFLAGS=-g -O0
 
-
 # User land (e.g. tests and supporting code)
 TS_OBJ = mapper.o
 EXES += mapper

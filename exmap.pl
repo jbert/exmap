@@ -1,4 +1,5 @@
 #!/usr/bin/perl -w
+use strict;
 use Exmap;
 use Gtk2;
 use Gtk2::SimpleList;
@@ -11,7 +12,6 @@ sub main
     my $exmap = Exmap->new;
 
     $exmap->load_procs;
-    $exmap->load_page_info;
 
     Gtk2->init;
     my $mw = Gtk2::Window->new("toplevel");
@@ -20,14 +20,11 @@ sub main
     $mw->set_default_size(800,600);
     $mw->signal_connect(destroy => sub { Gtk2->main_quit; });
 
-    my $proclist = ProcList->new($exmap->procs);
-    my $filelist = FileList->new($exmap->files);
     my $elflist = ElfList->new($exmap->elf_files);
 
     my $tabwin = Gtk2::Notebook->new;
-    $tabwin->append_page($proclist->window, "Processes");
-    $tabwin->append_page($filelist->window, "Files");
-    $tabwin->append_page($elflist->window, "Elf Files");
+    $tabwin->append_page(make_proctab($exmap), "Processes");
+    $tabwin->append_page(make_filetab($exmap), "Files");
 
     my $bottombar = Gtk2::HBox->new;
 
@@ -48,6 +45,60 @@ sub main
     $mw->show_all;
 
     Gtk2->main;
+}
+
+sub make_proctab
+{
+    my $exmap = shift;
+
+    my $vbox = Gtk2::VBox->new;
+    my $proclist = ProcList->new($exmap->procs);
+    my $proclistwin = $proclist->list_window;
+    my $filelist_for_current_proc = PerProcFileList->new;
+    
+    $vbox->add($proclist->window);
+    $vbox->add($filelist_for_current_proc->window);
+
+    # Update the filelist when the proc selection changes
+    $proclistwin->get_selection->signal_connect(changed => sub {
+	my $selection = shift;
+	my $model = $proclistwin->get_model;
+	my $iter = $selection->get_selected;
+	return undef unless $iter;
+	my $pid = $model->get_value($iter, 0);
+	my $proc = $exmap->pid_to_proc($pid);
+	$filelist_for_current_proc->set_proc($proc, $exmap);
+    });
+    
+    
+    return $vbox;
+}
+
+sub make_filetab
+{
+    my $exmap = shift;
+
+    my $vbox = Gtk2::VBox->new;
+    my $filelist = FileList->new($exmap->files);
+    my $filelistwin = $filelist->list_window;
+    my $proclist_for_current_file = PerFileProcList->new;
+    
+    $vbox->add($filelist->window);
+    $vbox->add($proclist_for_current_file->window);
+
+    # Update the proclist when the file selection changes
+    $filelistwin->get_selection->signal_connect(changed => sub {
+	my $selection = shift;
+	my $model = $filelistwin->get_model;
+	my $iter = $selection->get_selected;
+	return undef unless $iter;
+	my $fname = $model->get_value($iter, 0);
+	my $file = $exmap->name_to_file($fname);
+	$proclist_for_current_file->set_file($file);
+    });
+    
+    
+    return $vbox;
 }
 
 # ------------------------------------------------------------
@@ -166,10 +217,17 @@ sub new
     $c = ref $c if ref $c;
     my $s = {};
     bless $s, $c;
-    $s->{_files} = \@_;
     $s->_init_windows;
-    $s->update_rows;
+    $s->set_files(@_);
     return $s;
+}
+
+sub set_files
+{
+    my $s = shift;
+    $s->{_files} = \@_;
+    $s->update_rows;
+    return 1;
 }
 
 sub _columns
@@ -198,6 +256,119 @@ sub update_rows
      } @{$s->{_files}};
     return 1;
 }
+
+
+# ------------------------------------------------------------
+package PerProcFileList;
+use base qw/ListView/;
+use constant BYTES_PER_KBYTE => 1024;
+
+sub new
+{
+    my $c = shift;
+    $c = ref $c if ref $c;
+    my $s = {};
+    bless $s, $c;
+    $s->_init_windows;
+    return $s;
+}
+
+sub set_proc
+{
+    my $s = shift;
+    $s->{_proc} = shift;
+    my $exmap = shift;
+    $s->update_rows($exmap);
+    return 1;
+}
+
+sub _columns
+{
+    return ('File Name' => 'text',
+	    'Size (K)' => 'double',
+	    'Mapped (K)' => 'double',
+	    'Effective (K)' => 'double',
+	    );
+}
+
+sub update_rows
+{
+    my $s = shift;
+    my $exmap = shift;
+    
+    my $lw = $s->list_window;
+
+    my $proc = $s->{_proc};
+    return unless $proc;
+    my @files = map { $exmap->name_to_file($_) } $proc->filenames;
+    @{$lw->{data}} = map {
+	[
+	 $_->name,
+	 $proc->vm_size($_) / BYTES_PER_KBYTE,
+	 $proc->mapped_size($_) / BYTES_PER_KBYTE,
+	 $proc->effective_size($_)  / BYTES_PER_KBYTE,
+	 ]
+     } @files;
+    return 1;
+}
+
+
+# ------------------------------------------------------------
+package PerFileProcList;
+use base qw/ListView/;
+
+use constant BYTES_PER_KBYTE => 1024;
+
+sub new
+{
+    my $c = shift;
+    $c = ref $c if ref $c;
+    my $s = {};
+    bless $s, $c;
+    $s->_init_windows;
+    return $s;
+}
+
+sub set_file
+{
+    my $s = shift;
+    $s->{_file} = shift;
+    $s->update_rows;
+    return 1;
+}
+
+sub _columns
+{
+    return (PID => 'int',
+	    Exe => 'text',
+	    'Size (K)' => 'double',
+	    'Mapped (K)' => 'double',
+	    'Effective (K)' => 'double',
+	    );
+}
+
+sub update_rows
+{
+    my $s = shift;
+    my $lw = $s->list_window;
+
+    my $file = $s->{_file};
+    return unless $file;
+    my @procs = $file->procs;;
+
+    @{$lw->{data}} = map {
+	[
+	 $_->pid,
+	 $_->exe_name,
+	 $_->vm_size($file) / BYTES_PER_KBYTE,
+	 $_->mapped_size($file) / BYTES_PER_KBYTE,
+	 $_->effective_size($file)  / BYTES_PER_KBYTE,
+	 ]
+     } @procs;
+    return 1;
+}
+
+
 
 # ------------------------------------------------------------
 package ElfList;

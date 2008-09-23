@@ -1,0 +1,65 @@
+
+TODO
+====
+
+- serious performance problem with a lib with a large number of symbols.
+strace showed lots of mmap/munmap action, many objects/variables being
+created/destroyed? check perl debugging options.
+
+- changing process and then selecting the same mapped file (lib) doesn't
+refresh the section/symbol list. 
+
+- decent Data.pm testing
+	- write a shared lib
+		- three global arrays of at least 10*PAGE_SIZE
+			- read all of one
+			- don't touch another
+			- write to all of another
+
+- move all of the calculation into Data.pm, leaving View as more pure Gtk
+
+- rejig code
+	- MapData, Process, MappedFile, VMA
+	- MapData, init with a list of pids
+		- creates Process objs for each
+	- walk all Processes
+		- read /proc/pid/maps
+		- create VMAs from maps
+		- Each VMA reads Exmap info
+		- maintain backlink from VMA to process
+			- loop, so need explicit freeing in MapData obj
+			on DESTROY and reload
+	- build list of all mapped files, from pid vmas
+		- link each vma back to each file
+		- link each pid to each file
+		- link each file back to vmas (or pids)
+	
+exmap.ko:
+--------
+
+- add correct locking around mm_struct and vma access in exmap write()
+
+- uncomment and fix/look into:
+	pidmapped page with zero mapcount? at Data.pm line 284.
+
+- find a way to work out in-core residency of anon (non-file-backed) vmas
+
+shmap.pl
+--------
+
+- add ability to select a mapped file and get system-wide info on it
+	- add per process "this mapped file" info into the "pids which
+maps this file"
+
+- set initial focus on mapping entry
+
+DESIGN
+======
+
+DONE - display mapped files instead of VMAs?
+	- or distinguish between:
+		- mapped shared libs
+		- mapped exes
+		- other
+	- and then have different 'detail' displays for those? maybe not needed,
+	but different back-end code, perhaps.

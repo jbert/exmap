@@ -16,8 +16,33 @@ one, correctly accounting for .text, .data and .bss (if present).
 BUGS
 ====
 
+FIXED? - kernel hang with:
+
+spin_is_locked(kernel/fork.c:da0a36e0) already locked by /home/ssp/exmap-0.3/exmap.c/381.(Not tainted)
+
+I think this was due to not downing the mmap_sem. Fix not yet confirmed.
+
+
+
 - "PID 9968 can't find VMA afd37000 at Exmap.pm line 297."
 
 Occassional failure, at startup, probably due to a process doing work
 after we save a snapshot of its maps. Let me know if this happens
 frequently enough to be annoying.
+
+[update: we now read the exmap info sooner after reading the
+/proc/xxx/map info. This reduces (but doesn't eliminate) the window to
+cause this problem.]
+
+
+- Can't open mapfile /proc/18301/maps: No such file or directory at
+Exmap.pm line 224.
+
+Benign. Due to process exit after snapshot?
+
+
+FIXED? - 'undefined val for mapped_size...'
+
+[not seen since reading exmap info straight after /proc/xxx/maps]
+
+

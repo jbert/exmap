@@ -41,6 +41,15 @@ kernel module which implies you're trusting this code at
 root-equivalent privs anyway.
 
 
+
+Additionally, if you select a process, you get a list of all files
+mapped by that process, with the above sizes (vm, mapped and
+effective) for that file *in that process*.
+
+Similarly, selecting a file in the 'Files' tab gives you a list of
+processes mapping that file.
+
+
 Using
 -----
 
