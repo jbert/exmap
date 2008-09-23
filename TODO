@@ -10,7 +10,7 @@
 - we can have a map to a (deleted) file. We'll fail to open this
 (d'uh). What problem does this cause? Just a "non elf" file?
 
-- update Makefile with 'normal CFLAGS'. Perhaps -fPIC for all?	
+DONE - update Makefile with 'normal CFLAGS'. Perhaps -fPIC for all?	
 
 - read /proc/k?mem using pfn to show hex contents?
 	- I think /dev/mem is what is wanted.

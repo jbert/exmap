@@ -861,7 +861,7 @@ sub calc_maps
 	    && $previous_file->is_elf
 	    && $s->range->start == $previous_vma->range->end) {
 
-	    # Case 2a - a the last elf segment could be continuing
+	    # Case 2a - the elf segment(s) could be continuing
 	    # from the previous vma
 
 	    my @prev_segs = $previous_file->elf->loadable_segments;
@@ -869,26 +869,23 @@ sub calc_maps
 	    
 	    # TODO - this is cut-and-paste from previous (with some
 	    # differences). Make this a vma method.
-	    my $seg = $prev_segs[-1];
+	    foreach my $seg (@prev_segs) {
 
-	    my $seg_to_mem = $previous_vma->_get_seg_to_mem($seg);
-	    my $seg_mem_range = $seg->mem_range->add($seg_to_mem);
-	    my $subrange = $seg_mem_range->intersect($s->range);
-	    if ($subrange && $subrange->size > 0) {
-		unless ($subrange->start == $s->{info}->{start}) {
-		    warn sprintf("%d: cont seg mismatch vma 0x%08x != 0x%08x",
-				 $subrange->start, $s->{info}->{start});
-		    # Error return or continue?
-		}
+		my $seg_to_mem = $previous_vma->_get_seg_to_mem($seg);
+		my $seg_mem_range = $seg->mem_range->add($seg_to_mem);
+		my $subrange = $seg_mem_range->intersect($s->range);
+		next unless $subrange && $subrange->size > 0;
+
 		my $elf_subrange = $subrange->subtract($seg_to_mem);
 		my $map = Exmap::Map->new($s, $subrange, $elf_subrange);
 		$non_elf_start = $subrange->end;
-	    
+		
 		::debug(sprintf "%d: added elf cont map %s",
 			$pid, $map->to_string);
 		push @maps, $map;
 		$previous_file->add_map($map);
 	    }
+	    
 	    if ($non_elf_start < $s->{info}->{end}) {
 		$non_elf_map = Exmap::Map->new($s,
 					       Range->new($non_elf_start,

@@ -384,8 +384,6 @@ int setup_from_pid(pid_t pid)
 	struct mm_struct *mm = NULL;
 	struct task_struct *tsk;
 	int errcode = -EINVAL;
-	/* is volatile sufficient, or do we need memory barriers? */
-	volatile int have_spinlock = 0;
 
 	tsk = find_task_by_pid(pid);
 	if (tsk == NULL) {
