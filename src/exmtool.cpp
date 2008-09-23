@@ -6,6 +6,7 @@
 #include <sstream>
 #include <iostream>
 #include <vector>
+#include <string.h>
 
 using namespace std;
 using namespace Exmap;
@@ -18,9 +19,9 @@ typedef int (*Handler)(SnapshotPtr &snap, char *args[]);
 
 struct command
 {
-    char *command;
+    const char *command;
     Handler handler;
-    char *usage;
+    const char *usage;
 } cmd_handles[] = {
     { "procs",
       do_procs,
