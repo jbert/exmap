@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 use strict;
 use warnings;
-use Test::More tests => 99;
+use Test::More tests => 152;
 use_ok('Elf');
 
 my %TESTDAT = (
@@ -51,28 +51,74 @@ foreach my $f (keys %TESTDAT) {
     chomp $f;
     $e = Elf->new($f);
     ok($e, "can instantiate on $f");
-    is($e->file, $f, "correct file name");
-    is($e->e_type, $td->{type}, "has right file type");
-    is($e->is_executable, $td->{exe}, "file $f is " .
+    is($f, $e->file, "correct file name");
+    is($td->{type}, $e->e_type, "has right file type");
+    is($td->{exe}, $e->is_executable, "file $f is " .
        ($td->{exe} ? '' : 'not ')
        . "an exe");
 
-    my @lines = `objdump -h $f | tail +6`;
-    $td->{num_sections} = (scalar @lines) / 2;
+    my @readelf_lines = `readelf -S $f`;
+    @readelf_lines = grep { /^\s*\[ *\d+\]/ } @readelf_lines;
+    $td->{num_sections} = scalar @readelf_lines;
     
-    is($e->num_sections, $td->{num_sections}, "mainstream sections match objdump");
+    is( $td->{num_sections}, $e->num_sections,
+       "number of sections match readelf");
 
-    foreach my $s ($e->mainstream_sections) {
-	my $objdump_name = shift @lines;
-	shift @lines; #Discard next
-	$objdump_name =~ s/\r?\n$//;
-	$objdump_name =~ s/^\s*\d+\s+//;
-	$objdump_name =~ s/\s.*$//;
-	is($s->name, $objdump_name, "section names match objdump $objdump_name");
+    ok($e->section_by_name('.text'), "can find text section");
+    ok($e->section_by_name('.data'), "can find data section");
+    ok($e->section_by_name('.bss'), "can find bss section");
+
+    my $num_segments = $e->num_segments;
+    ok($num_segments, "can get segments (program header)");
+
+    my @lines = `readelf -l $f`;
+    die("Can't run readelf") unless @lines;
+    my ($line) = grep { /There are \d+ program headers/ } @lines;
+    my ($readelf_numsegs) = $line =~ /There are (\d+) program headers/;
+    $readelf_numsegs = $1;
+    is($readelf_numsegs, $num_segments, "number of segments matches readelf");
+
+    my @segments = $e->segments;
+    is(scalar(@segments), $num_segments, "sanity check number of segments");
+    @segments = $e->loadable_segments;
+    is(2, scalar(@segments), "two areas for each elf");
+
+    ok($segments[0]->is_readable, "first is readable");
+    ok(!$segments[0]->is_writable, "first is not writable");
+    ok($segments[0]->is_executable, "first is executable");
+
+    ok($segments[1]->is_readable, "second is readable");
+    ok($segments[1]->is_writable, "second is writable");
+    ok(!$segments[1]->is_executable, "second is not executable");
+    
+    foreach my $s ($e->sections) {
+	my $readelf_name = shift @readelf_lines;
+	$readelf_name =~ s/\r?\n$//;
+	$readelf_name =~ s/^\s*\[ *\d+\]\s//;
+	$readelf_name =~ s/\s.*$//;
+	is($s->name, $readelf_name,
+	   "section names and order match readelf $readelf_name");
     }
 
     my @symbols = $e->defined_symbols;
-    is(scalar(@symbols), $td->{num_symbols}, "correct number of symbols");
+    is($td->{num_symbols}, scalar(@symbols), "correct number of symbols");
+
+    if ($td->{type} eq 'EXEC' && $td->{num_symbols} > 0) {
+	my $mainsym = $e->symbol_by_name('main');
+	ok($mainsym, "can find 'main' symbol in exe");
+	is($mainsym->name, 'main', "symbol has correct name");
+	ok($mainsym->size > 0, "main has non-zero size");
+	ok($mainsym->is_func, "main symbol is a function");
+
+	my @symbols = grep {
+	    $_->name eq 'main'
+	} $e->symbols_in_section($e->section_by_name('.text'));
+	is(scalar @symbols, 1, "can find 1 main symbol in .text");
+	@symbols = grep {
+	    $_->name eq 'main'
+	} $e->symbols_in_section($e->section_by_name('.data'));
+	is(scalar @symbols, 0, "can find no main symbol in .data");
+    }
 }
 
 remove_build_files();

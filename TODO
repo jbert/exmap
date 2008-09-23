@@ -1,28 +1,36 @@
+- command line tool (to help reduce mem foorprint)
+
+- build a gnome2 and look for mem hogs :-)
+
+DONE? - have autotest cover .bss being split over two vmas.
+
+- read /proc/k?mem using pfn to show hex contents?
+	- I think /dev/mem is what is wanted.
+	- shift pfn to get a physical address
+	- seek & read /dev/mem to read data
+
+	- add a 'RangeView' to exmap.pl
+		- pfns are in Vma, so add 'read_mem_range' to that?
+
 Which of these would be most useful?
 
-- show mapped files for selected process
-
-- add 'view usage info for a shared lib in a single process'
-
-- For ELF files, collate the multiple VMAs for a single elf files into
-one, correctly accounting for .text, .data and .bss (if present).
+DONE - show overall Effective. This should add up to total mem in use...
 
 - Find a way to identify glibc [anon] maps as heap
 
-- Provide per-symbol usage for unstripped ELF files
+DONE - Provide per-symbol usage for unstripped ELF files
 
-- more and better tests
+- better documentation (tooltips?) to explain numbers
+
+- Elf.pm is holding an open fd to each Elf file. We probably need it
+to seek to read symbols, unless we open/close there (or make it
+private and do it in the caller).
+
+- if we do 'reload', functionality then will need to explicitly break
+proc <-> file <-> vma links since refcounting won't.
 
 BUGS
 ====
-
-FIXED? - kernel hang with:
-
-spin_is_locked(kernel/fork.c:da0a36e0) already locked by /home/ssp/exmap-0.3/exmap.c/381.(Not tainted)
-
-I think this was due to not downing the mmap_sem. Fix not yet confirmed.
-
-
 
 - "PID 9968 can't find VMA afd37000 at Exmap.pm line 297."
 
@@ -41,7 +49,7 @@ Exmap.pm line 224.
 Benign. Due to process exit after snapshot?
 
 
-FIXED? - 'undefined val for mapped_size...'
+- 'undefined val for mapped_size...'
 
 [not seen since reading exmap info straight after /proc/xxx/maps]
 

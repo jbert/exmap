@@ -1,3 +1,20 @@
+Release 0.5: 4/11/2005
+======================
+
+Significant rewrite. Rather than expose the VMAs within a process in
+the 'Process' API, an intermediate layer of 'maps' is used. This was
+done to provide an interface with better than page granularity for
+examining ranges (needed for examining ELF sections and symbols
+easily).
+
+Added (seems to be working) list of ELF sections and symbols. If the
+file you are examining is an ELF file, you'll see the different ELF
+sections listed.  If the file is an *unstripped* ELF file, you can
+also select an ELF section and examine the ELF symbols (functions,
+global data) within that section.
+
+ELF symbols are now listed to byte granularity.
+
 Release 0.4: 5/10/2005
 ======================	
 

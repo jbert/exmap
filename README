@@ -1,14 +1,25 @@
 Exmap
 =====
 
-Description
------------
+Summary
+-------
 
 Exmap is a tool to allow the real memory usage of a collection of
 processes to be examined. A linux kernel loadable module is used to
-export information to userspace, which is examined perl/gtk
+export information to userspace, which is examined by a perl/gtk
 application to build a picture of how pages are shared amongst
 processes and their shared libraries.
+
+Section-level information is exposed for ELF files and symbol-level
+information is exposed for unstripped ELF files.
+
+NOTE: exmap hasn't received widespread testing as yet (4/11/2005) and
+I'd be very interested in hearing of any problems you may have. Please
+see the feedback section at the end for my contact details.
+
+
+Description
+-----------
 
 For each process and for each mapped file, the following information
 is provided:
@@ -50,13 +61,49 @@ Similarly, selecting a file in the 'Files' tab gives you a list of
 processes mapping that file.
 
 
-Using
------
+If the selected file is an ELF file (i.e. an executable or shared
+library) then the ELF sections within that file will be listed. There
+are quite a few of those, most of which can be ignored. Here's a crib
+sheet to some of the important ones (corrections gratefully received):
+
+.text		This contains all the executable code for the exe/lib
+.data		This is static, global or file-scope data in the app. This is
+		generally mapped read/write by the OS. Data which is read
+		will be shared amongst processes which make use of it.
+		Data which is written to will cause a COW (copy on write)
+		fault which will cause the process to get a private copy
+		of the entire page in which the write occured.
+.rodata		As for .data, but the compiler has determined it is read-only
+		This is typically mapped read-only into memory (along with
+		the .text section)
+.bss		As for .data, but the items were all uninitialised (which the
+		C standard requires to mean 'initialised to zero'). The OS
+		can play games here to reduce the memory usage. In
+		particular, it seems that all .bss pages which have only
+		been read are shared amongst all apps. Which is nice.
+
+
+If you select an ELF section, and the underyling file is *not
+stripped*, then the right hand window will display a list of all ELF
+symbols in that section (with appropriate sizes). Note that typically
+*all* system binaries in a Linux distro are stripped. (To save disk
+space? I don't think the symbols tables would get mapped into
+memory). Hence this facility is probably only of use if you are
+running binaries you have built yourself. But then it is pretty
+cool...
+
+
+Building
+--------
 
 Typing 'make clean && make' should rebuild the exmap.ko kernel
 module. If not, you may need to install the appropriate packages to
 build kernel modules. On ubuntu, this is the 'linux-headers' package
 for your kernel.
+
+If you get an error building, you can try just 'make exmap.ko'. This
+will skip building the test executables, which appears to fail on some
+64-bit platforms. However, you won't be able to run the tests.
 
 Once you've built the 'exmap.ko', you can make use of it with:
 
@@ -76,6 +123,26 @@ Notes
 
 - The values for mapped files are summed over all processes mapping the file.
 
-- The ELF files are currently work-in-progress, but should provide
-per-symbol usage information (for large enough symbols, we only have
-page-level (4096 bytes) granularity).
+- ELF symbols appear to be working. As of exmap-0.5, this include
+byte-level granlarity in the reporting.
+
+- Developed and tested on Linux 2.6.12, 32-bit x86 (Pentium 4). I'm
+interested to know of any problems with building or running it,
+particularly on other kernel versions and processor types
+(e.g. 64-bit).
+
+
+Feedback
+--------
+
+If you use exmap, I'd appreciate an email to help gauge the level of
+interest in this tool. If you find any problems or have any ideas or
+suggestions for improvement, I'd be very interested in hearing from
+you.
+
+Having 'exmap' in your subject line or body increases the chances that
+your message won't get lost in the spam.
+
+
+John Berthels
+<jjberthels@gmail.com>

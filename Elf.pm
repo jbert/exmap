@@ -1,12 +1,29 @@
-# Examine the contents of an ELF file. Allow the contents of a
-# particular page to be examined.
-package Elf;
 use strict;
 use warnings;
 use Range;
 
-
 # ------------------------------------------------------------
+# Examine the contents of an ELF file. Allow the contents of a
+# particular page to be examined.
+package Elf;
+
+# Static methods and constants
+use constant PAGE_SIZE => 4096;
+sub page_align_down
+{
+    my $addr = shift;
+    return $addr - ($addr % PAGE_SIZE);
+}
+
+sub page_align_up
+{
+    my $addr = shift;
+    return page_align_down($addr + PAGE_SIZE - 1);
+}
+
+
+
+
 
 sub new
 {
@@ -28,6 +45,7 @@ sub new
     }
     $s->{_fh} = $fh;
     return undef unless $s->_load_file_header;
+    return undef unless $s->_load_segments;
     return undef unless $s->_load_sections;
     return undef unless $s->_correlate;
     return $s;
@@ -42,11 +60,12 @@ sub DESTROY
     }
 }
 
+
 sub _correlate
 {
     my $s = shift;
 
-    my @sections = $s->all_sections;
+    my @sections = $s->sections;
     my $string_section_index = $s->{_elf_header}->{shstrnxdx};
     unless ($string_section_index <= scalar(@sections)) {
 	warn("Invalid string section index : $string_section_index");
@@ -71,7 +90,8 @@ sub _correlate
     return 1;
 }
 
-sub find_symbols_in_range
+
+sub find_symbols_in_mem_range
 {
     my $s = shift;
     my $r = shift;
@@ -79,13 +99,13 @@ sub find_symbols_in_range
     my $symtab = $s->{_symbol_table_section};
     return () unless $symtab;
     
-    return $symtab->find_symbols_in_range($r);
+    return $symtab->find_symbols_in_mem_range($r);
 }
 
 sub defined_symbols
 {
     my $s = shift;
-    return grep { $_->value && $_->name } $s->all_symbols;
+    return grep { $_->is_defined } $s->all_symbols;
 }
 
 sub all_symbols
@@ -96,7 +116,42 @@ sub all_symbols
     return $symtab->symbols;
 }
 
+sub symbol_by_name
+{
+    my $s = shift;
+    my $name = shift;
+    foreach my $sym ($s->all_symbols) {
+	return $sym if $sym->name eq $name;
+    }
+    return undef;
+}
+
+sub symbols_in_section
+{
+    my $s = shift;
+    my $section = shift;
+    return $s->find_symbols_in_mem_range($section->mem_range);
+}
+
 sub file { return $_[0]->{_file}; }
+
+# This measure corresponds to the 'maplength' var in dl-load.c in glibc.
+# It is the end of the last loadable segment's virt addr minus the start
+# of the first loadable segments virt addr.
+
+# maplength = loadcmds[nloadcmds - 1].allocend - c->mapstart;
+# c->mapstart = ph->p_vaddr & ~(GLRO(dl_pagesize) - 1);
+# c->allocend = ph->p_vaddr + ph->p_memsz;
+sub maplength
+{
+    my $s = shift;
+    my @segs = $s->loadable_segments;
+    return undef unless @segs;
+
+    my $first_mapstart = page_align_down($segs[0]->vaddr);
+    my $last_allocend = $segs[-1]->vaddr + $segs[-1]->mem_size;
+    return $last_allocend - $first_mapstart;
+}
 
 =pod
 
@@ -150,68 +205,107 @@ sub _load_file_header
     $s->{_elf_header} = \%elf_header;
     return scalar keys %elf_header;
 }
-    
+
+
+
 sub _load_sections
 {
     my $s = shift;
 
-    my $offset = $s->{_elf_header}->{shoff};
-    if ($offset == 0) {
-	warn("No section table");
-	return undef;
-    }
-    my $n_sections = $s->{_elf_header}->{shnum};
-    my $section_size = $s->{_elf_header}->{shentsize};
+    my $SHN_UNDEF = 0;
+    my @byte_buffers = $s->_load_table("section header table",
+				       $s->{_elf_header}->{shoff},
+				       $s->{_elf_header}->{shnum},
+				       $s->{_elf_header}->{shentsize});
 
-    unless ($n_sections > 0) {
-	warn("Invalid number of sections");
+    unless (@byte_buffers) {
+	warn "Failed to load buffers for sections";
 	return undef;
     }
-#    unless ($section_size > 0) {
-#	warn("Invalid section size");
-#	return undef;
-#    }
     
     my @sections;
-
-    my $SHN_UNDEF = 0;
-    my $i_section = 0;
-    
-    for ($i_section = 0;
-	 $i_section < $n_sections;
-	 ++$i_section, $offset += $section_size) {
-
-	my $buffer;
-	seek($s->{_fh}, $offset, 0);
-	my $nbytes = sysread($s->{_fh}, $buffer, $section_size);
-	if ($nbytes != $section_size) {
-	    warn("Failed to read section header - read [$nbytes] not [$section_size]");
-	    return undef;
-	}
-
-	my $section;
-	if ($i_section == $SHN_UNDEF) {
-	    $section = Elf::Section->new_undef;
-	}
-	else {
-	    $section = Elf::Section->new($buffer);
-#	    if (!$section || $section->size == 0) {
-#		warn("Read invalid section in file ".$s->file);
-#	    }
-	}
-
-	push @sections, $section;
-    }
-
+    @sections = map { Elf::Section->new($_) } @byte_buffers;
     $s->{_sections} = \@sections;
 
     return scalar @sections;
 }
 
+sub _load_segments
+{
+    my $s = shift;
+
+    my $SHN_UNDEF = 0;
+    my @byte_buffers = $s->_load_table("program header table",
+				       $s->{_elf_header}->{phoff},
+				       $s->{_elf_header}->{phnum},
+				       $s->{_elf_header}->{phentsize});
+
+    unless (@byte_buffers) {
+	warn "Failed to load buffers for program header segments";
+	return undef;
+    }
+    
+    my @segments;
+    @segments = map { Elf::Segment->new($_) } @byte_buffers;
+    $s->{_segments} = \@segments;
+
+    return scalar @segments;
+}
+
+sub _load_table
+{
+    my $s = shift;
+    my $table_name = shift;
+    my $offset = shift;
+    my $num_chunks = shift;
+    my $chunk_size = shift;
+
+    if ($offset == 0) {
+	warn("No $table_name");
+	return ();
+    }
+
+    unless ($num_chunks > 0) {
+	warn("Invalid number of chunks in $table_name");
+	return ();
+    }
+    
+    my @buffers;
+    seek($s->{_fh}, $offset, 0);
+    my $big_buffer;
+    my $read_size = $chunk_size * $num_chunks;
+    my $nbytes = sysread($s->{_fh}, $big_buffer, $read_size);
+    
+    if ($nbytes != $read_size) {
+	warn("Failed to read $read_size at $offset for $table_name");
+	return ();
+    }
+    
+    while (length $big_buffer > 0) {
+	my $buffer = substr($big_buffer, 0, $chunk_size, "");
+	push @buffers, $buffer;
+    }
+    
+    return @buffers;
+}
+
 sub num_sections
 {
     my $s = shift;
-    return scalar $s->mainstream_sections;
+    return scalar $s->sections;
+}
+
+sub num_segments
+{
+    my $s = shift;
+    return scalar $s->segments;
+}
+
+sub segments { return @{$_[0]->{_segments}}; }
+sub loadable_segments
+{
+    my $s = shift;
+    return grep { $_->is_load } $s->segments;
 }
 
 sub section
@@ -221,39 +315,27 @@ sub section
     return ${$s->{_sections}}[$index];
 }
 
-sub mainstream_sections
+sub section_by_name
 {
     my $s = shift;
-    my @sections = $s->all_sections;
-    shift @sections; # Hack, drop first since it is the UNDEF section
-    return grep { !($_->name eq '.strtab')
-		      && !($_->name eq '.shstrtab')
-		      && !$_->is_symbol_table } @sections;
+    my $name = shift;
+    foreach my $section (@{$s->{_sections}}) {
+	return $section if $section->name eq $name;
+    }
+    return undef;
 }
 
-sub all_sections
+sub mappable_sections
+{
+    my $s = shift;
+    return grep { $_->addr != 0 } $s->sections;
+}
+
+sub sections
 {
     my $s = shift;
     return @{$s->{_sections}};
 }
-
-sub find_section_for_offset
-{
-    my $s = shift;
-    my $offset = shift;
-
-    foreach my $section (@{$s->{_sections}}) {
-	my $start = $section->offset;
-	my $size = $section->size;
-	next unless defined $start && defined $size;
-	if ($offset >= $start && $offset < $start + $size) {
-	    return $section;
-	}
-    }
-
-    return undef;
-}
-
 
 =pod
 
@@ -305,17 +387,6 @@ sub new
     return $s;
 }
 
-# This is a null section. We want to create these to maintain ordering/indexing
-sub new_undef
-{
-    my $c = shift;
-    $c = ref $c if ref $c;
-    my $s = {};
-    $s->{_type} = 0;
-    bless $s, $c;
-    return $s;
-}
-
 sub set_string_section
 {
     my $s = shift;
@@ -327,7 +398,6 @@ sub set_fh
     my $s = shift;
     $s->{_fh} = shift;
 }
-
 
 
 =pod
@@ -358,14 +428,17 @@ sub _unpack_buffer
     qw(name type flags addr offset size link info addralign entsize);
     my %fields;
     @{$s}{@fieldnames} = unpack('i10', $s->{_buffer});
-    $s->{_range} = Range->new($s->offset, $s->offset + $s->size);
+    $s->{_file_range} = Range->new($s->offset, $s->offset + $s->size);
+    $s->{_mem_range} = Range->new($s->addr, $s->addr + $s->size);
     return 1;
 }
 
 sub offset { return $_[0]->{_offset}; }
+sub addr { return $_[0]->{_addr}; }
 sub size { return $_[0]->{_size}; }
 sub link { return $_[0]->{_link}; }
-sub range { return $_[0]->{_range}; }
+sub file_range { return $_[0]->{_file_range}; }
+sub mem_range { return $_[0]->{_mem_range}; }
 
 sub name
 {
@@ -427,6 +500,12 @@ sub is_symbol_table
     return !$s->is_null && $s->sh_type eq 'SYMTAB';
 }
 
+sub is_nobits
+{
+    my $s = shift;
+    return !$s->is_null && $s->sh_type eq 'NOBITS';
+}
+
 sub find_string
 {
     my $s = shift;
@@ -447,14 +526,14 @@ sub find_string
     return $name;
 }
 
-
 sub symbols
 {
     my $s = shift;
+    return () unless $s->{_sorted_symbol_table};
     return @{$s->{_sorted_symbol_table}};
 }
 
-sub find_symbols_in_range
+sub find_symbols_in_mem_range
 {
     my $s = shift;
     my $r = shift;
@@ -463,7 +542,7 @@ sub find_symbols_in_range
     my $symtab = $s->{_sorted_symbol_table};
     foreach my $symbol (@$symtab) {
 	push @symbols, $symbol
-	    if $r->overlaps($symbol->range);
+	    if $symbol->is_defined && $r->overlaps($symbol->range);
     }
 
     return @symbols;
@@ -592,6 +671,11 @@ sub st_type
     return $types[$type];
 }
 
+sub is_func { return $_[0]->st_type eq 'FUNC' }
+sub is_data { return $_[0]->st_type eq 'OBJECT' }
+sub is_file { return $_[0]->st_type eq 'FILE' }
+sub is_section { return $_[0]->st_type eq 'SECTION' }
+
 sub set_string_table
 {
     my $s = shift;
@@ -607,5 +691,142 @@ sub name
     return undef unless $string_table;
     return $string_table->find_string($s->{_name});
 }
+
+
+sub is_defined
+{
+    my $s = shift;
+    return $s->value && $s->name;
+}
+
+
+# ------------------------------------------------------------
+# Wrap one ELF program header segment
+package Elf::Segment;
+
+sub new
+{
+    my $c = shift;
+    $c = ref $c if ref $c;
+    my $s = {};
+    $s->{_buffer} = shift;
+    bless $s, $c;
+    return undef unless $s->_unpack_buffer;
+    return $s;
+}
+
+=pod
+
+/* Program segment header.  */
+
+typedef struct
+{
+  Elf32_Word	p_type;			/* Segment type */
+  Elf32_Off	p_offset;		/* Segment file offset */
+  Elf32_Addr	p_vaddr;		/* Segment virtual address */
+  Elf32_Addr	p_paddr;		/* Segment physical address */
+  Elf32_Word	p_filesz;		/* Segment size in file */
+  Elf32_Word	p_memsz;		/* Segment size in memory */
+  Elf32_Word	p_flags;		/* Segment flags */
+  Elf32_Word	p_align;		/* Segment alignment */
+} Elf32_Phdr;
+
+=cut
+    
+sub _unpack_buffer
+{
+    my $s = shift;
+    
+    my @fieldnames = map {"_$_"}
+    qw(type offset vaddr paddr filesz memsz flags align);
+    my %fields;
+    @{$s}{@fieldnames} = unpack('i8', $s->{_buffer});
+    $s->{_file_range} = Range->new($s->offset, $s->offset + $s->file_size);
+    $s->{_mem_range} = Range->new($s->vaddr, $s->vaddr + $s->mem_size);
+    return 1;
+}
+
+=pod
+
+/* Legal values for p_type (segment type).  */
+
+#define	PT_NULL		0		/* Program header table entry unused */
+#define PT_LOAD		1		/* Loadable program segment */
+#define PT_DYNAMIC	2		/* Dynamic linking information */
+#define PT_INTERP	3		/* Program interpreter */
+#define PT_NOTE		4		/* Auxiliary information */
+#define PT_SHLIB	5		/* Reserved */
+#define PT_PHDR		6		/* Entry for header table itself */
+#define PT_TLS		7		/* Thread-local storage segment */
+#define	PT_NUM		8		/* Number of defined types */
+#define PT_LOOS		0x60000000	/* Start of OS-specific */
+#define PT_GNU_EH_FRAME	0x6474e550	/* GCC .eh_frame_hdr segment */
+#define PT_GNU_STACK	0x6474e551	/* Indicates stack executability */
+#define PT_GNU_RELRO	0x6474e552	/* Read-only after relocation */
+#define PT_LOSUNW	0x6ffffffa
+#define PT_SUNWBSS	0x6ffffffa	/* Sun Specific segment */
+#define PT_SUNWSTACK	0x6ffffffb	/* Stack segment */
+#define PT_HISUNW	0x6fffffff
+#define PT_HIOS		0x6fffffff	/* End of OS-specific */
+#define PT_LOPROC	0x70000000	/* Start of processor-specific */
+#define PT_HIPROC	0x7fffffff	/* End of processor-specific */
+
+=cut
+
+use constant PT_LOAD => 1;    
+sub is_load
+{
+    my $s = shift;
+    return $s->type == PT_LOAD;
+}
+
+=pod
+    
+/* Legal values for p_flags (segment flags).  */
+
+#define PF_X		(1 << 0)	/* Segment is executable */
+#define PF_W		(1 << 1)	/* Segment is writable */
+#define PF_R		(1 << 2)	/* Segment is readable */
+#define PF_MASKOS	0x0ff00000	/* OS-specific */
+#define PF_MASKPROC	0xf0000000	/* Processor-specific */
+
+=cut
+
+use constant PF_X => 1;
+use constant PF_W => 2;
+use constant PF_R => 4;    
+    
+sub is_readable
+{
+    my $s = shift;
+    return $s->_flag_is_set(PF_R);
+}
+sub is_writable
+{
+    my $s = shift;
+    return $s->_flag_is_set(PF_W);
+}
+sub is_executable
+{
+    my $s = shift;
+    return $s->_flag_is_set(PF_X);
+}
+
+sub _flag_is_set
+{
+    my $s = shift;
+    my $bitflag = shift;
+    my $flags = $s->{_flags};
+    return $bitflag & $flags;
+}
+
+sub offset { return $_[0]->{_offset}; }
+sub vaddr { return $_[0]->{_vaddr}; }
+sub file_size { return $_[0]->{_filesz}; }
+sub mem_size { return $_[0]->{_memsz}; }
+sub file_range { return $_[0]->{_file_range}; }
+sub mem_range { return $_[0]->{_mem_range}; }
+sub type { return $_[0]->{_type}; }
+
 
 1;

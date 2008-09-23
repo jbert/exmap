@@ -19,6 +19,14 @@ AL_OBJ = allocer.o
 EXES += allocer
 OBJS += $(AL_OBJ)
 
+ML_OBJ = memload.o
+EXES += memload
+OBJS += $(ML_OBJ)
+
+MI_OBJ = mapit.o
+EXES += mapit
+OBJS += $(MI_OBJ)
+
 EXTRA_DEL_FILES += *~
 
 TESTS +=  test-range.pl test-elf.pl test-exmap.pl
@@ -36,6 +44,12 @@ mapper: $(TS_OBJ)
 
 allocer: $(AL_OBJ)
 	$(CC) -o allocer $(AL_OBJ)
+
+memload: $(ML_OBJ)
+	$(CC) -o memload $(ML_OBJ)
+
+mapit: $(MI_OBJ)
+	$(CC) -o mapit $(MI_OBJ)
 
 libsharedarray.so: $(SA_OBJ)
 	$(CC) -shared -o libsharedarray.so $(SA_OBJ)

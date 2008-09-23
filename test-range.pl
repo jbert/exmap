@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 use strict;
 use warnings;
-use Test::More tests => 58;
+use Test::More tests => 70;
 
 use_ok qw(Range);
 
@@ -44,6 +44,12 @@ ok($r->overlaps(Range->new(3, 7)), "overlap10");
 
 ok($r->overlaps(Range->new(0, 10)), "overlap11");
 
+ok(!$r->contains_range(Range->new(0, 1), "contains range 1"));
+ok(!$r->contains_range(Range->new(6, 7), "contains range 2"));
+ok($r->contains_range($r), "contains range 3");
+ok($r->contains_range(Range->new(3, 5), "contains range 3"));
+ok($r->equals(Range->new(2, 6)), "Range isn't changed by contains_range");
+
 ok($r->equals(Range->new(2, 6)), "range equality1");
 ok(!$r->equals(Range->new(1, 6)), "range equality2");
 ok(!$r->equals(Range->new(2, 7)), "range equality3");
@@ -69,23 +75,37 @@ ok(Range->new(3, 6)->intersect(Range->new(0, 10))->equals(Range->new(3, 6)),
    "intersect7");
 
 $r->add(3);
-is($r->start, 5, "add to range moves start");
-is($r->end, 9, "add to range moves end");
-is($r->size, 4, "add to range leaves size alone");
+ok($r->equals(Range->new(2,6)), "add doesn't modify range");
+
+is($r->add(3)->start, 5, "add to range moves start");
+is($r->add(3)->end, 9, "add to range moves end");
+is($r->add(3)->size, 4, "add to range leaves size alone");
 $r->subtract(2);
-is($r->start, 3, "subtract range moves start");
-is($r->end, 7, "subtract range moves end");
-is($r->size, 4, "subtract range leaves size alone");
+ok($r->equals(Range->new(2,6)), "subtract doesn't modify range");
+
+is($r->subtract(2)->start, 0, "subtract range moves start");
+is($r->subtract(2)->end, 4, "subtract range moves end");
+is($r->subtract(2)->size, 4, "subtract range leaves size alone");
 
 
-$r->truncate_below(2);
-ok($r->equals(Range->new(3, 7)), "truncate_below below the range");
-$r->truncate_below(3);
-ok($r->equals(Range->new(3, 7)), "truncate_below at the start");
 $r->truncate_below(4);
-ok($r->equals(Range->new(4, 7)), "truncate_below in the middle");
-$r->truncate_below(8);
-ok($r->equals(Range->new(8, 8)), "truncate_below above the end");
-$r = Range->new(3, 7);
-$r->truncate_below(7);
+ok($r->equals(Range->new(2, 6)), "truncate_below doesn't change range");
+
+ok($r->truncate_below(1)->equals(Range->new(2, 6)),
+   "truncate_below below the range");
+ok($r->truncate_below(2)->equals(Range->new(2, 6)),
+   "truncate_below at the start");
+ok($r->truncate_below(4)->equals(Range->new(4, 6)),
+   "truncate_below in the middle");
+ok($r->truncate_below(8)->equals(Range->new(8, 8)),
+   "truncate_below above the end");
+$r = Range->new(3, 7)->truncate_below(7);
 ok($r->equals(Range->new(7, 7)), "truncate_below at the end");
+
+
+my $t = $r->copy;
+ok($t, "Can create a copy");
+is($t->start, $r->start, "have same start");
+is($t->end, $r->end, "have same end");
+is($t->size, $r->size, "have same size");
+

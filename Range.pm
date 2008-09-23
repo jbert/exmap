@@ -26,10 +26,20 @@ sub _sanity_check
 sub start { return $_[0]->{_start}; }
 sub end { return $_[0]->{_end}; }
 
+sub copy
+{
+    my $s = shift;
+    my $new = {};
+    %$new = %$s;
+    bless $new, ref $s;
+    return $new;
+}
+
 sub equals
 {
     my $s = shift;
     my $r = shift;
+    return undef unless $r;
     return $s->start == $r->start && $s->end == $r->end;
 }
 
@@ -49,9 +59,9 @@ sub add
 {
     my $s = shift;
     my $val = shift;
-    $s->{_start} += $val;
-    $s->{_end} += $val;
-    return 1;
+    my $start = $s->start + $val;
+    my $end = $s->end + $val;
+    return Range->new($start, $end);
 }
 
 sub subtract
@@ -65,6 +75,13 @@ sub size
 {
     my $s = shift;
     return $s->end - $s->start;
+}
+
+sub contains_range
+{
+    my $s = shift;
+    my $r = shift;
+    return $r->equals($s->intersect($r));
 }
 
 sub contains
@@ -89,9 +106,26 @@ sub truncate_below
     my $s = shift;
     my $limit = shift;
 
-    $s->{_start} = $limit if $s->start < $limit;
-    $s->{_end} = $limit if $s->end < $limit;
-    return 1;
+    my $start = $s->start < $limit ? $limit : $s->start;
+    my $end = $s->end < $limit ? $limit : $s->end;
+    return Range->new($start, $end);
+}
+
+sub truncate_above
+{
+    my $s = shift;
+    my $limit = shift;
+
+    my $start = $s->start > $limit ? $limit : $s->start;
+    my $end = $s->end > $limit ? $limit : $s->end;
+    return Range->new($start, $end);
+}
+
+sub to_string
+{
+    my $s = shift;
+    return sprintf "(0x%08x,0x%08x)", $s->start, $s->end;
+#    return "(" . $s->start . "," . $s->end . ")";
 }
 
 1;

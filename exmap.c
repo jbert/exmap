@@ -13,21 +13,17 @@
 #include <linux/version.h>
 #include <linux/vmalloc.h>
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6 , 11)
-     #error "Need at least kernel version 2.6.11 for check_user_page_readable";
-#endif
-
-
 #define PROCFS_NAME "exmap"
 MODULE_LICENSE ("GPL");
 MODULE_AUTHOR ("John Berthels <jjberthels@gmail.com>");
-MODULE_DESCRIPTION ("Show page-level information on a vma within a process");
+MODULE_DESCRIPTION ("Show page-level information on all vmas within a task");
 
 struct exmap_page_info
 {
+	/* We return this as a cookie to allow the same page to be
+	 * identified */
 	unsigned long pfn;
-	unsigned int pidmapped : 1;
-	unsigned int mapcount : 31;
+	unsigned int mapcount;
 };
 
 /* Not very nice. We save the data at write() time and then use it at read().
@@ -96,6 +92,9 @@ static int walk_page_tables(struct mm_struct *mm,
 	pte_t *ptep, pte;
 	unsigned long pfn;
 	struct page *page;
+
+	page_info->pfn = 0;
+	page_info->mapcount = 0;
 	
 	// No support for HUGETLB as yet
 	//page = follow_huge_addr(mm, address, write);
@@ -120,17 +119,15 @@ static int walk_page_tables(struct mm_struct *mm,
 
 	pte = *ptep;
 
-	page_info->pidmapped = pte_present(pte) ? 1 : 0;
-	pfn = pte_pfn(pte);
-	if (pfn_valid(pfn)) {
-		page_info->pfn = pfn;
-		page = pfn_to_page(pfn);
-		page_info->mapcount = page_mapcount(page);
+	if (pte_present(pte)) {
+		pfn = pte_pfn(pte);
+		if (pfn_valid(pfn)) {
+			page_info->pfn = pfn;
+			page = pfn_to_page(pfn);
+			page_info->mapcount = page_mapcount(page);
+		}
 	}
-	else {
-		page_info->pfn = 0;
-		page_info->mapcount = 0;
-	}
+	
 	pte_unmap(ptep);
 
 	return 0;
@@ -153,7 +150,6 @@ static int save_vma_page_info(struct vm_area_struct *vma,
 		if (walk_page_tables(vma->vm_mm,
 				     page_addr,
 				     page_info) < 0) {
-			page_info->pidmapped = 0;
 			page_info->mapcount = 0;
 			page_info->pfn = 0;
 		}
@@ -274,9 +270,8 @@ static int show_one_page(struct exmap_page_info *page_info,
 	
 	len = snprintf (buffer,
 			buflen,
-			"0x%08lx %c %d\n",
+			"0x%08lx %d\n",
 			page_info->pfn,
-			page_info->pidmapped ? '1' : '0',
 			page_info->mapcount);
 
 	if (len >= buflen)
