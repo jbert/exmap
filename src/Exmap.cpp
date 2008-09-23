@@ -326,9 +326,10 @@ void Process::add_file(const FilePtr &file)
 
 bool Process::calculate_maps(FilePoolPtr &file_pool)
 {
-    MapCalculator mc(_vmas, file_pool, selfptr());
+    MapCalculator mc(_vmas, _maps, file_pool, selfptr());
 
-    return mc.calc_maps(_maps) && !_maps.empty();
+    /// Set up _maps
+    return mc.calc_maps() && !_maps.empty();
 }
 
 
@@ -954,6 +955,17 @@ list<MapPtr> Map::sort(const list<MapPtr> &maplist)
     return result;
 }
 
+std::string Map::list_to_string(const list<MapPtr> &maps)
+{
+    stringstream sstr;
+    list<MapPtr>::const_iterator map_it;
+    for (map_it = maps.begin(); map_it != maps.end(); ++map_it) {
+	sstr << (*map_it)->to_string() << "\n";
+    }
+    return sstr.str();
+}
+
+
 // ------------------------------------------------------------
 
 SysInfo::~SysInfo()
@@ -1185,14 +1197,15 @@ string LinuxSysInfo::proc_map_file(pid_t pid)
 
     
 MapCalculator::MapCalculator(const list<VmaPtr> &vmas,
+                             list<MapPtr> &maps,
 			     FilePoolPtr &file_pool,
 			     const ProcessPtr &proc)
-: _vmas(vmas), _file_pool(file_pool), _proc(proc)
+: _vmas(vmas), _maps(maps), _file_pool(file_pool), _proc(proc)
 {
     _maps.clear();
 }
 
-bool MapCalculator::calc_maps(list<MapPtr> &maps)
+bool MapCalculator::calc_maps()
 {
     walk_vma_files();
 
@@ -1210,13 +1223,12 @@ bool MapCalculator::calc_maps(list<MapPtr> &maps)
 	return false;
     }
 
-    maps = Map::sort(_maps);
+    _maps = Map::sort(_maps);
 
-    if (!sanity_check(maps)) {
+    if (!sanity_check()) {
 	warn << "calc_maps: sanity check failed\n";
-	return false;
+        dump_maps_and_vmas();
     }
-
 
     return true;
 }
@@ -1256,13 +1268,12 @@ bool MapCalculator::add_holes()
     return true;
 }
 
-bool MapCalculator::sanity_check(const list<MapPtr> &maps)
+bool MapCalculator::sanity_check()
 {
     stringstream pref;
     pref << _proc->pid() << " sanity_check: ";
-    list<MapPtr>::const_iterator map_it = maps.begin();
+    list<MapPtr>::const_iterator map_it = _maps.begin();
     list<VmaPtr>::iterator vma_it = _vmas.begin();
-
 
     while (vma_it != _vmas.end()) {
 	VmaPtr &vma = *vma_it;
@@ -1287,7 +1298,7 @@ bool MapCalculator::sanity_check(const list<MapPtr> &maps)
 	    ++map_it;
 	    dbg << pref.str() << (*map_it)->to_string() << "\n";
 
-	    if (map_it == maps.end()) {
+	    if (map_it == _maps.end()) {
 		warn << pref.str() << "maps don't cover vma "
 		    << vma->to_string() << "\n";
 		return false;
@@ -1296,7 +1307,7 @@ bool MapCalculator::sanity_check(const list<MapPtr> &maps)
 		warn << pref.str() << "maps are not contiguous "
 		    << lastmap->to_string() << " "
 		    << (*map_it)->to_string() << "\n";
-		warn << dump_maps_to_string(maps);
+		dump_maps_and_vmas();
 		return false;
 	    }
 	    lastmap = *map_it;
@@ -1310,7 +1321,7 @@ bool MapCalculator::sanity_check(const list<MapPtr> &maps)
 	
 	++vma_it;
 	++map_it;
-	if (vma_it != _vmas.end() && map_it == maps.end()) {
+	if (vma_it != _vmas.end() && map_it == _maps.end()) {
 	    warn << pref.str() << "not enough maps for vmas "
 		<< vma->to_string() << "\n";
 	    return false;
@@ -1318,32 +1329,35 @@ bool MapCalculator::sanity_check(const list<MapPtr> &maps)
 	if (vma_it != _vmas.end()) {
 	    dbg << pref.str() << "VMA: " << vma->to_string() << "\n";
 	}
-	if (map_it != maps.end()) {
+	if (map_it != _maps.end()) {
 	    dbg << pref.str() << (*map_it)->to_string() << "\n";
 	}
     }
 
-    if (map_it != maps.end()) {
+    if (map_it != _maps.end()) {
 	warn << pref.str() << "too many maps for vmas "
 	    << (*map_it)->to_string() << "\n";
-	warn << dump_maps_to_string(maps);
+        dump_maps_and_vmas();
 	return false;
     }
 
     return true;
 }
 
-string MapCalculator::dump_maps_to_string(const std::list<MapPtr> &maps)
+void MapCalculator::dump_maps_and_vmas()
 {
-    stringstream sstr;
-    list<MapPtr>::const_iterator map_it;
+    warn << "MAPS: " << " ----------------------------\n";
+    warn << Map::list_to_string(_maps) << "\n";
+    dump_vmas();
+}
 
-    sstr << "----------------------------\n";
-    for (map_it = maps.begin(); map_it != maps.end(); ++map_it) {
-	sstr << (*map_it)->to_string() << "\n";
+void MapCalculator::dump_vmas()
+{
+    warn << "VMAS: " << _vmas.size() << " ----------------------------\n";
+    list<VmaPtr>::const_iterator vma_it;
+    for (vma_it = _vmas.begin(); vma_it != _vmas.end(); ++vma_it) {
+	warn << (*vma_it)->to_string() << "\n";
     }
-    sstr << "----------------------------\n";
-    return sstr.str();
 }
 
 bool MapCalculator::calc_maps_for_file(const string &fname)

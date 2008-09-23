@@ -17,48 +17,7 @@ Each release
 For 0.10
 ========
 
-DONE - text/fix dump_maps
-
-DONE - merge 0.9 64bit work into trunk (check diffs on trunk...worth keeping?)
-	- and getpagesize()
-	- maybe start from 0.9 and add in...
-
-- look at the "global memory analysis tool" gmail, some good todos in there
-
-DONE - remove leading _ on buttons
-
-DONE - add keyboard accelerators to buttons
-
-NO - add keyboard accelerators to tabs
-
-DONE - update ELF sections when file changes (proc might be NULL)
-
-OK - are some of the 'sums' with 'all processes' set invalid as sums?
-
-DONE - need to clear all sub-sections when we change something higher up
-	- e.g. picking new process clears file
-		- but elf sections don't change
-
-DONE - clear symbols when sections change?
-
-NOTABUG? - check .got bug from Lubos
-	- add auto test case before fixing
-		- pick out ELF section which must have writable > 0
-
-- cross-propagate file/proc selection between tabs
-	- optional?
-		- allow optional checkboxes to be set by
-		cmdline and/or env var. avoids cfg file?
-
-- cmdline sorting should ignore path
-
-- keep PID? remove pid? father-son sort?
-	- can we move some info out of the 'processes' list and into 
-	an 'info' area below the list?
-	e.g. 'full cmdline', parent pid (clickable!), children, 
-
-- rename 'writable' column
-	- improve doc for writable column
+DONE - have 'make exmtool' not depend on gtk/X 
 
 DONE - Change list labels when we select 
 	(e.g. maps for process X, maps for all procs)
@@ -88,8 +47,52 @@ DONE - mad non-linear CPU usage
 DONE - read *dynamic* symbols from ELF files
 	- does this do what we need?
 
+DONE - text/fix dump_maps
+
+DONE - merge 0.9 64bit work into trunk (check diffs on trunk...worth keeping?)
+	- and getpagesize()
+	- maybe start from 0.9 and add in...
+
+DONE - look at the "global memory analysis tool" gmail, some good todos in there
+
+DONE - remove leading _ on buttons
+
+DONE - add keyboard accelerators to buttons
+
+NO - add keyboard accelerators to tabs
+
+DONE - update ELF sections when file changes (proc might be NULL)
+
+OK - are some of the 'sums' with 'all processes' set invalid as sums?
+
+DONE - need to clear all sub-sections when we change something higher up
+	- e.g. picking new process clears file
+		- but elf sections don't change
+
+DONE - clear symbols when sections change?
+
+NOTABUG? - check .got bug from Lubos
+	- add auto test case before fixing
+		- pick out ELF section which must have writable > 0
+
 Sometime
 ========
+
+- cross-propagate file/proc selection between tabs
+	- optional?
+		- allow optional checkboxes to be set by
+		cmdline and/or env var. avoids cfg file?
+
+- cmdline sorting should ignore path
+
+- keep PID? remove pid? father-son sort?
+	- can we move some info out of the 'processes' list and into 
+	an 'info' area below the list?
+	e.g. 'full cmdline', parent pid (clickable!), children, 
+
+- rename 'writable' column
+	- improve doc for writable column
+
 
 - add some kind of in-application help
 

@@ -302,6 +302,9 @@ namespace Exmap
 	/// Sort a list of MapPtr
 	static std::list<MapPtr> sort(const std::list<MapPtr> &maplist);
 	
+        /// Make a readable string from a list of MapPtr
+        static std::string list_to_string(const std::list<MapPtr> &maps);
+
 	/// Return the intersection of the two lists (considered as
 	/// sets).
 	static std::list<MapPtr> intersect_lists(const std::list<MapPtr> &la,
@@ -512,11 +515,12 @@ namespace Exmap
 	public:
 	    /// Init the calculator. The calculator is per-proc, per vma-list
 	    MapCalculator(const std::list<VmaPtr> &vmas,
+                    std::list<MapPtr> &maps,
 		    FilePoolPtr &file_pool,
 		    const ProcessPtr &proc);
 
 	    /// Do the calculation.
-	    bool calc_maps(std::list<MapPtr> &maps);
+	    bool calc_maps();
 	private:
 
 	    bool calc_maps_for_file(const std::string &fname);
@@ -528,15 +532,18 @@ namespace Exmap
 		    const Elf::SegmentPtr &seg,
 		    std::list<VmaPtr> &vmas);
 	    bool add_holes();
-	    bool sanity_check(const std::list<MapPtr> &maps);
+	    bool sanity_check();
 	    void walk_vma_files();
-	    std::string dump_maps_to_string(const std::list<MapPtr> &maps);
+	    void dump_maps_and_vmas();
+	    void dump_maps();
+	    void dump_vmas();
 	    std::map<std::string, std::list<Exmap::VmaPtr> > _fname_to_vmas;
 
 	    std::list<VmaPtr> _vmas;
+            /// This is our 'return value'
+            std::list<MapPtr> &_maps;
 	    FilePoolPtr _file_pool;
 	    const ProcessPtr _proc;
-	    std::list<MapPtr> _maps;
     };
 
 };

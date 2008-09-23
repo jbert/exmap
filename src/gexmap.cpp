@@ -998,8 +998,10 @@ void FileTab::recalc_sectionlist()
     Exmap::FilePtr file;
     bool show_all_procs = _all_procs_checkbutton.get_active();
 
-    if (pid != 0 && !fname.empty()) {
+    if (pid != 0) {
 	proc = _snapshot->proc(pid);
+    }
+    if(!fname.empty()) {
 	file = _snapshot->file(fname);
     }
 

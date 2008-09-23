@@ -9,7 +9,7 @@ SUBDIRS=kernel jutil src tools
 .PHONY: build clean test $(SUBDIRS)
 
 DOSUBDIRS=for dir in $(SUBDIRS); do \
-		$(MAKE) -C $$dir $@; \
+		$(MAKE) -C $$dir $@ || { exit 1; }; \
 	done
 
 build: $(SUBDIRS)
