@@ -15,7 +15,7 @@ public:
 	std::list<std::string> vma_lines;
     };
     ~TestSysInfo();
-    std::list<pid_t> TestSysInfo::accessible_pids();
+    std::list<pid_t> accessible_pids();
     bool sanity_check();
     bool read_page_info(pid_t pid,
 			    std::map<Elf::Address, std::list<Exmap::Page> >&pi);
@@ -96,7 +96,7 @@ bool TestSysInfo::read_page_info(pid_t pid,
 	Elf::Address addr;
 	Elf::Address vma_start = (*vma_it)->start();
 	Elf::Address vma_end = (*vma_it)->end();
-	for (addr = vma_start; addr < vma_end; addr += Elf::PAGE_SIZE) {
+	for (addr = vma_start; addr < vma_end; addr += Elf::page_size()) {
 	    bool resident, writable;
 	    PageCookie cookie;
 	    random_page_info(&resident, &writable, &cookie);

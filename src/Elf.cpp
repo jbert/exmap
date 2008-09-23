@@ -2,9 +2,9 @@
  * (c) John Berthels 2005 <jjberthels@gmail.com>. See COPYING for license.
  */
 #include "Elf.hpp"
-#include "jutil.hpp"
 
 #include <sstream>
+#include <unistd.h> // getpagesize()
 
 using namespace std;
 using namespace jutil;
@@ -13,20 +13,29 @@ using namespace Elf;
 
 static bool load_table(std::istream &is,
 	const std::string &table_name,
-	Elf32_Off offset,
-	Elf32_Half num_chunks,
-	Elf32_Half chunksize,
+	unsigned long offset,
+	short num_chunks,
+	short chunksize,
 	std::list<std::string> &entries);
 
+int Elf::page_size()
+{
+    static int _page_size = 0;
+
+    if (_page_size == 0) {
+	_page_size = getpagesize();
+    }
+    return _page_size;
+}
 
 Address Elf::page_align_down(const Address &addr)
 {
-    return addr & ~(PAGE_SIZE-1);
+    return addr & ~(page_size()-1);
 }
 
 Address Elf::page_align_up(const Address &addr)
 {
-    return page_align_down(addr + PAGE_SIZE - 1);
+    return page_align_down(addr + page_size() - 1);
 }
 
 // ------------------------------------------------------------
@@ -34,6 +43,11 @@ Address Elf::page_align_up(const Address &addr)
 File::File()
     : _lazy_load_sections(false)
 { }
+
+unsigned long File::elf_file_type()
+{
+    return _filestruct->type();
+}
 
 bool File::load(const string &fname, bool warn_if_non_elf)
 {
@@ -48,12 +62,14 @@ bool File::load(const string &fname, bool warn_if_non_elf)
 	warn << "File::load - can't open file: " << fname << "\n";
 	return false;
     }
+
     if (!load_file_header()) {
 	if (warn_if_non_elf) {
 	    warn << "File::load - failed to load header: " << fname << "\n";
 	}
 	return false;
     }
+
     if (!load_segments()) {
 	warn << "File::load - failed to load segment info: " << fname << "\n";
 	return false;
@@ -61,6 +77,19 @@ bool File::load(const string &fname, bool warn_if_non_elf)
     return true;
 }
      
+void File::unload(void)
+{
+    _lazy_load_sections = false;
+    _ifs.clear();
+    _ifs.close();
+    _fname.clear();
+    _segments.clear();
+    _sections.clear();
+    _symbol_table_section.reset();
+    _filestruct.reset();
+}
+
+
 list<SymbolPtr> File::find_symbols_in_mem_range(const RangePtr &mrange)
 {
     if (!lazy_load_sections() || !_symbol_table_section) {
@@ -207,11 +236,6 @@ list<SectionPtr> File::sections()
     return _sections;
 }
 
-int File::elf_file_type()
-{
-    return _header.e_type;
-}
-
 bool File::is_executable()
 {
     return elf_file_type() == ET_EXEC;
@@ -233,18 +257,6 @@ bool File::lazy_load_sections()
     _lazy_load_sections = true;
     if (!load_sections()) { return false; }
     return correlate_string_sections();
-}
-
-void File::unload()
-{
-    _lazy_load_sections = false;
-    _ifs.clear();
-    _ifs.close();
-    _fname.clear();
-    memset(&_header, 0, sizeof(_header));
-    _segments.clear();
-    _sections.clear();
-    _symbol_table_section.reset();
 }
 
 bool File::open_file()
@@ -281,7 +293,7 @@ bool File::correlate_string_sections()
 {
     list<SectionPtr>::iterator it;
     SectionPtr string_table;
-    int string_table_index = _header.e_shstrndx;
+    int string_table_index = _filestruct->shstrndx();
     if (string_table_index >= num_sections()) {
 	warn << "correlate_string_sections - invalid string index\n";
 	return false;
@@ -306,13 +318,32 @@ bool File::correlate_string_sections()
 
 bool File::load_file_header()
 {
-    memset(&_header, '\0', sizeof(_header));
-    
-    binary_read(_ifs, _header);
+    char ident_buf[EI_NIDENT];
 
-    if (memcmp(_header.e_ident, "\x7f\x45\x4c\x46", 4) != 0) {
+    memset(ident_buf, '\0', sizeof(ident_buf));
+    binary_read(_ifs, ident_buf);
+    _ifs.clear();
+    _ifs.seekg(0, ios::beg);
+
+    if (memcmp(ident_buf, "\x7f\x45\x4c\x46", 4) != 0) {
+	/* Not an ELF file */
 	return false;
     }
+
+    char e_class = ident_buf[EI_CLASS];
+    switch (e_class) {
+	case ELFCLASS32:
+	    _filestruct.reset(new FileStruct<Elf32_Ehdr>(_ifs));
+	    break;
+	case ELFCLASS64:
+	    _filestruct.reset(new FileStruct<Elf64_Ehdr>(_ifs));
+	    break;
+	default:
+	    warn << "Unrecognised ELF class: " << e_class << "\n";
+	    return false;
+	    break;
+    }
+
     return _ifs.good();
 }
 
@@ -323,9 +354,9 @@ bool File::load_sections()
     
     if (!load_table(_ifs,
 		    "section header table",
-		    _header.e_shoff,
-		    _header.e_shnum,
-		    _header.e_shentsize,
+		    _filestruct->shoff(),
+		    _filestruct->shnum(),
+		    _filestruct->shentsize(),
 		    entries)
 	|| entries.empty()) {
 	return false;
@@ -350,9 +381,9 @@ bool File::load_segments()
     
     if (!load_table(_ifs,
 		    "segment header table",
-		    _header.e_phoff,
-		    _header.e_phnum,
-		    _header.e_phentsize,
+		    _filestruct->phoff(),
+		    _filestruct->phnum(),
+		    _filestruct->phentsize(),
 		    entries)
 	|| entries.empty()) {
 	return false;
@@ -385,14 +416,38 @@ typedef struct
   Elf32_Word	p_align;		// Segment alignment
 } Elf32_Phdr;
 */
+
 bool Segment::init(const string &buffer)
 {
-    memcpy(&_seghdr, buffer.data(), sizeof(_seghdr));
-    _mem_range.reset(new Range(_seghdr.p_vaddr,
-			       _seghdr.p_vaddr + _seghdr.p_memsz));
-    _file_range.reset(new Range(_seghdr.p_offset,
-				_seghdr.p_offset + _seghdr.p_filesz));
+    switch (buffer.size()) {
+	case sizeof(Elf32_Phdr):
+	    _segstruct.reset(new SegmentStruct<Elf32_Phdr>(buffer));
+	    break;
+	case sizeof(Elf64_Phdr):
+	    _segstruct.reset(new SegmentStruct<Elf64_Phdr>(buffer));
+	    break;
+	default:
+	    warn << "Invalid segment size: " << buffer.size();
+	    return false;
+	    break;
+    }
+
+    _mem_range.reset(new Range(_segstruct->vaddr(),
+			       _segstruct->vaddr() + _segstruct->memsz()));
+    _file_range.reset(new Range(_segstruct->offset(),
+				_segstruct->offset() + _segstruct->filesz()));
     return true;
+}
+
+
+Address Segment::offset()
+{
+    return _segstruct->offset();
+}
+
+Address Segment::align()
+{
+    return _segstruct->align();
 }
 
 RangePtr Segment::mem_range()
@@ -405,14 +460,9 @@ RangePtr Segment::file_range()
     return _file_range;
 }
 
-Address Segment::offset()
-{
-    return _seghdr.p_offset;
-}
-
 bool Segment::is_load()
 {
-    return _seghdr.p_type == PT_LOAD;
+    return _segstruct->type() == PT_LOAD;
 }
 
 bool Segment::is_readable()
@@ -432,7 +482,7 @@ bool Segment::is_executable()
 
 bool Segment::flag_is_set(int flag)
 {
-    return _seghdr.p_flags & flag;
+    return _segstruct->flags() & flag;
 }
 
 // ------------------------------------------------------------
@@ -455,11 +505,24 @@ typedef struct
 
 bool Section::init(const string &buffer)
 {
-    memcpy(&_secthdr, buffer.data(), sizeof(_secthdr));
-    _file_range.reset(new Range(_secthdr.sh_offset,
-				_secthdr.sh_offset + _secthdr.sh_size));
-    _mem_range.reset(new Range(_secthdr.sh_addr,
-			       _secthdr.sh_addr + _secthdr.sh_size));
+    switch (buffer.size()) {
+	case sizeof(Elf32_Shdr):
+	    _sectstruct.reset(new SectionStruct<Elf32_Shdr>(buffer));
+	    break;
+	case sizeof(Elf64_Shdr):
+	    _sectstruct.reset(new SectionStruct<Elf64_Shdr>(buffer));
+	    break;
+	default:
+	    warn << "Invalid section size: " << buffer.size();
+	    return false;
+	    break;
+    }
+
+    _file_range.reset(new Range(_sectstruct->offset(),
+				_sectstruct->offset() + _sectstruct->size()));
+    _mem_range.reset(new Range(_sectstruct->addr(),
+			       _sectstruct->addr() + _sectstruct->size()));
+
     return true;
 }
 
@@ -470,24 +533,9 @@ string Section::name()
 
 bool Section::set_name(istream &is, const SectionPtr &string_table)
 {
-    int name_index = _secthdr.sh_name;
+    int name_index = _sectstruct->name();
     _name = string_table->find_string(is, name_index);
     return is.good();
-}
-
-Elf32_Word Section::link()
-{
-    return _secthdr.sh_link;
-}
-
-Elf32_Addr Section::addr()
-{
-    return _secthdr.sh_addr;
-}
-
-Elf32_Word Section::size()
-{
-    return _secthdr.sh_size;
 }
 
 RangePtr Section::file_range()
@@ -500,29 +548,24 @@ RangePtr Section::mem_range()
     return _mem_range;
 }
 
-int Section::section_type()
-{
-    return _secthdr.sh_type;
-}
-
 bool Section::is_null()
 {
-    return section_type() == SHT_NULL;
+    return _sectstruct->type() == SHT_NULL;
 }
 
 bool Section::is_string_table()
 {
-    return section_type() == SHT_STRTAB;
+    return _sectstruct->type() == SHT_STRTAB;
 }
 
 bool Section::is_symbol_table()
 {
-    return section_type() == SHT_SYMTAB;
+    return _sectstruct->type() == SHT_SYMTAB;
 }
 
 bool Section::is_nobits()
 {
-    return section_type() == SHT_NOBITS;
+    return _sectstruct->type() == SHT_NOBITS;
 }
 
 std::string Section::find_string(istream &is, int index)
@@ -531,7 +574,7 @@ std::string Section::find_string(istream &is, int index)
 	return false;
     }
 
-    int offset = _secthdr.sh_offset + index;
+    int offset = _sectstruct->offset() + index;
     is.seekg(offset, ios_base::beg);
     // Symbols are null-terminated.
     const int MAX_SYMBOL_SIZE = 1024;
@@ -562,19 +605,34 @@ std::list<SymbolPtr> Section::find_symbols_in_mem_range(const RangePtr &mrange)
     return result;
 }
 
+unsigned long Section::addr()
+{
+    return _sectstruct->addr();
+}
+
+unsigned long Section::link()
+{
+    return _sectstruct->link();
+}
+
+unsigned long Section::size()
+{
+    return _sectstruct->size();
+}
+
 bool Section::load_symbols(std::istream &is,
 			   const SectionPtr &string_table)
 {
     if (!is_symbol_table()) {
 	return false;
     }
-    unsigned int symentry_size = _secthdr.sh_entsize;
+    unsigned int symentry_size = _sectstruct->entsize();
     if (symentry_size <= 0) {
 	warn << "Invalid symbol entry table size " << symentry_size << "\n";
 	return false;
     }
 
-    int total_size = _secthdr.sh_size;
+    int total_size = _sectstruct->size();
     if (total_size % symentry_size != 0) {
 	warn << "Section::load_symbols - size mismatch " << symentry_size
 	     << ", " << total_size << "\n";
@@ -584,7 +642,7 @@ bool Section::load_symbols(std::istream &is,
     list<string> entries;
     if (!load_table(is,
 		"symbol table",
-		_secthdr.sh_offset,
+		_sectstruct->offset(),
 		(total_size / symentry_size),
 		symentry_size,
 		entries)
@@ -613,15 +671,28 @@ bool Section::load_symbols(std::istream &is,
 
 bool Symbol::init(const string &buffer)
 {
-    memcpy(&_symstruct, buffer.data(), sizeof(_symstruct));
-    _range.reset(new Range(_symstruct.st_value,
-			   _symstruct.st_value + _symstruct.st_size));
+    switch (buffer.size()) {
+	case sizeof(Elf32_Sym):
+	    _symstruct.reset(new SymbolStruct<Elf32_Sym>(buffer));
+	    break;
+	case sizeof(Elf64_Sym):
+	    _symstruct.reset(new SymbolStruct<Elf64_Sym>(buffer));
+	    break;
+	default:
+	    warn << "Invalid symbol size: " << buffer.size() << "\n";
+	    return false;
+	    break;
+    }
+
+    _range.reset(new Range(_symstruct->value(),
+			   _symstruct->value() + _symstruct->size()));
+
     return true;
 }
 
 bool Symbol::set_name(istream &is, const SectionPtr &string_table)
 {
-    int name_index = _symstruct.st_name;
+    int name_index = _symstruct->name();
     _name = string_table->find_string(is, name_index);
     return is.good();
 }
@@ -633,7 +704,7 @@ string Symbol::name()
 
 int Symbol::size()
 {
-    return _symstruct.st_size;
+    return _symstruct->size();
 }
 
 RangePtr Symbol::range()
@@ -643,12 +714,12 @@ RangePtr Symbol::range()
 
 bool Symbol::is_defined()
 {
-    return _symstruct.st_value != 0 && !_name.empty();
+    return _symstruct->value() != 0 && !_name.empty();
 }
 
 int Symbol::type()
 {
-    return _symstruct.st_info & 0xf;
+    return _symstruct->info() & 0xf;
 }
 
 bool Symbol::is_func()
@@ -675,9 +746,9 @@ bool Symbol::is_section()
 
 bool load_table(istream &is,
 	const std::string &table_name,
-	Elf32_Off offset,
-	Elf32_Half num_chunks,
-	Elf32_Half chunksize,
+	unsigned long offset,
+	short num_chunks,
+	short chunksize,
 	list<string> &entries)
 {
     entries.clear();

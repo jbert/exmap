@@ -6,11 +6,7 @@
 #include <sys/fcntl.h> /* For open flags */
 #include <unistd.h> /* For getopt */
 #include <stdio.h>
-#include <sys/user.h> /* For PAGE_SIZE */
-
-#ifndef PAGE_SIZE
-#define PAGE_SIZE (4096)
-#endif
+#include "pagesize.h"
 
 enum MapType {
      PRIVATE,
@@ -221,7 +217,7 @@ int main(int argc, char **argv)
 	  }
      }
 
-     map_size = PAGE_SIZE * num_pages;
+     map_size = CURRENT_PAGE_SIZE * num_pages;
 
      shared_anon_map = (fname == NULL && mt == SHARED);
      

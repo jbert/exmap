@@ -347,9 +347,11 @@ bool Process::calculate_maps(FilePoolPtr &file_pool)
 bool Process::load_page_info(SysInfoPtr &sys_info)
 {
     map<Address, list<Page> > page_info;
+    stringstream pref;
+    pref << pid() << " load_page_info: ";
 
     if (!sys_info->read_page_info(_pid, page_info)) {
-	warn << "Can't read page info for " << _pid;
+	warn << pref.str() << "can't read page info for " << _pid;
 	return false;
     }
 
@@ -360,11 +362,14 @@ bool Process::load_page_info(SysInfoPtr &sys_info)
 	if (!find_vma_by_addr(start_address, vma)) {
 	    // This can happen, a process can alloc whilst we are
 	    // running
-	    warn << "Process::load_page_info - can't find vma at "
+	    warn << pref.str() << "can't find vma at "
 		 << hex << start_address << dec << ": " << _pid << "\n";
 	    continue;
 	}
 	
+	if (pi_it->second.size() == 0) {
+	    warn << pref.str() << "VMA with no pages " << start_address << "\n";
+	}
 	vma->add_pages(pi_it->second);
 	_page_pool->inc_pages_count(pi_it->second);
     }
@@ -484,7 +489,7 @@ bool Vma::addr_to_pgnum(Address addr, unsigned int &pgnum)
 	return false;
     }
     a -= start();
-    pgnum = a / Elf::PAGE_SIZE;
+    pgnum = a / Elf::page_size();
     return true;
 }
 
@@ -533,7 +538,7 @@ bool Vma::get_pages_for_range(const RangePtr &mrange,
 	return true;
     }
 
-    Address bytes = Elf::PAGE_SIZE
+    Address bytes = Elf::page_size()
 	- (mrange->start() - Elf::page_align_down(mrange->start()));
     ppinfo.push_back(PartialPageInfo(_pages[start_pgnum], bytes));
 
@@ -542,7 +547,7 @@ bool Vma::get_pages_for_range(const RangePtr &mrange,
 	ppinfo.push_back(PartialPageInfo(_pages[end_pgnum], bytes));
     }
 
-    bytes = Elf::PAGE_SIZE;
+    bytes = Elf::page_size();
     for (unsigned int pgnum = start_pgnum + 1; pgnum < end_pgnum; ++pgnum) {
 	ppinfo.push_back(PartialPageInfo(_pages[pgnum], bytes));
     }
@@ -953,10 +958,10 @@ bool LinuxSysInfo::read_page_info(pid_t pid,
     for (it = lines.begin(); it != lines.end(); ++it) {
         // Lines are either:
         // Start a new VMA:
-        // VMA 0xdeadbeef <npages>
+        // VMA <vma base as %p> <npages>
         // or
         // Page info
-        // <pfn> <writable:bool> <swap_entry>
+        // <pfn (as %p)> <writable:bool> <swap_entry>
 	if (it->length() < 3) {
 	    warn << "read_page_info - short line: " << *it << "\n";
 	    continue;
@@ -965,7 +970,7 @@ bool LinuxSysInfo::read_page_info(pid_t pid,
 	if (it->substr(0, 3) == "VMA") {
 	    Address start_addr;
 	    string token;
-	    sstr.str(it->substr(6)); // "VMA 0xdeadbeef"
+	    sstr.str(it->substr(4)); // "VMA deadbeef"
 	    sstr >> hex >> start_addr;
 
 	    // Put a (copy of) the empty pagelist in for this address
@@ -1066,25 +1071,34 @@ VmaPtr LinuxSysInfo::parse_vma_line(const string &line_arg)
     string perms;
     Elf::Address start, end;
     off_t offset;
-    std::string fname;
+    string fname;
+    string::size_type dashpos;
+    VmaPtr vma;
+    string token;
+    
 
     // Break the range into two hex numbers
-    line[8] = ' ';
+    dashpos = line.find('-');
+    if (dashpos == string::npos) {
+	warn << "Can't find dash in VMA line: " << line << "\n";
+	return vma;
+    }
+    line[dashpos] = ' ';
     
     stringstream sstr(line);
     sstr >> hex >> start;
     sstr >> end;
     sstr >> perms;
     sstr >> offset;
-    if (line.length() >= 49) {
-	fname = line.substr(49);
-	chomp(fname);
-    }
-    else {
+    sstr >> token;
+    sstr >> token;
+
+    sstr >> fname;
+    if (fname.empty()) {
 	fname = ANON_NAME;
     }
 
-    VmaPtr vma(new Vma(start, end, offset, fname));
+    vma.reset(new Vma(start, end, offset, fname));
 
     return vma;
 }

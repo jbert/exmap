@@ -8,19 +8,28 @@
 
 #include <list>
 #include <string>
+#include <stdlib.h> // For strtol
 
 class ElfTest : public Test
 {
 public:
     bool setup();
     bool run();
+    bool maintests();
+    bool mix32_64();
     bool teardown();
 private:
     struct testdat
     {
-	int type;
+	unsigned long type;
 	bool is_exe;
     };
+    struct section_info
+    {
+	std::string name;
+	unsigned long size;
+    };
+    std::list<struct section_info> read_section_info(const std::string &fname);
     std::map<std::string, struct testdat> _testdat;
 };
 
@@ -29,7 +38,12 @@ using namespace Pcre;
 
 bool ElfTest::run()
 {
-    plan(110);
+    return maintests() && mix32_64();
+}
+
+bool ElfTest::maintests()
+{
+    plan(107);
 
     Elf::File e;
 
@@ -37,7 +51,7 @@ bool ElfTest::run()
     const string nonelf("/etc/motd");
     ok(jutil::file_exists(nonelf), "nonelf file exists");
     notok(e.load(nonelf), "can't load existing non-elf file");
-    const string exist_but_noprivs("/etc/shadow");
+    const string exist_but_noprivs("/proc/1/auxv");
     ok(jutil::file_exists(exist_but_noprivs), "file exists");
     notok(e.load(exist_but_noprivs), "can't load existing non-privs file");
        
@@ -52,13 +66,10 @@ bool ElfTest::run()
 	is(e.elf_file_type(), td->type, "file " + fname + " correct elf type");
 	is(e.is_executable(), td->is_exe, "file is_exe correct");
 
-	ok(jutil::read_proc_output("readelf -S " + fname,
-				   section_lines), "can readelf the file");
+	list<struct section_info> section_info = read_section_info(fname);
+	ok(section_info.size() > 0, "can readelf section info");
 
-	Regexp re;
-	ok(re.compile("^\\s*\\[ *\\d+]"), "can compile regexp");
-	re.grep(section_lines);
-	is (e.num_sections(), (int) section_lines.size(),
+	is (e.num_sections(), (int) section_info.size(),
 	    "number of sections match readelf");
 
 	ok(e.section(".text"), "can find text section");
@@ -70,6 +81,7 @@ bool ElfTest::run()
 
 	ok(jutil::read_proc_output("readelf -l " + fname,
 				   lines), "can readelf segments");
+	Regexp re;
 	re.compile("There are (\\d+) program headers");
 	re.grep(lines);
 	is((int) lines.size(), 1, "found right line in readelf output");
@@ -93,31 +105,46 @@ bool ElfTest::run()
 	notok(segs.back()->is_executable(), "second is not executable");
 
 
-	// get the same readelf lines again
-	ok(jutil::read_proc_output("readelf -l " + fname,
-				   lines), "can readelf segments");
 	bool all_sections_match = true;
 	list<Elf::SectionPtr> sections = e.sections();
 	is((int) sections.size(), e.num_sections(),
 	   "sanity check num sections");
 	list<Elf::SectionPtr>::iterator it;
 	int isection = 0;
+
+	// Only perform one test at max in this loop...
 	for (it = sections.begin(); it != sections.end(); ++it) {
-	    if (section_lines.empty()) {
+	    if (section_info.empty()) {
 		all_sections_match = false;
 		break;
 	    }
-	    string line = section_lines.front();
-	    section_lines.pop_front();
-	    string section_name = line.substr(7, 17);
-	    jutil::trim(section_name);
+
+	    struct section_info si = section_info.front();
+	    section_info.pop_front();
+
 	    Elf::SectionPtr sect = e.section(isection++);
-	    if (section_name != sect->name()) {
+
+	    if (si.name != sect->name()) {
+		// Throw the failed test
+		is(sect->name(), si.name, "Section names match");
+		all_sections_match = false;
+		break;
+	    }
+
+	    if (si.size != sect->size()) {
+		is(sect->size(), si.size,
+		   "Section sizes match for " + sect->name());
 		all_sections_match = false;
 		break;
 	    }
 	}
-	ok(all_sections_match, "section names and order match readelf");
+
+
+	// If we didn't throw a -ve test above, throw a +ve here (to
+	// keep to the plan).
+	if (all_sections_match) {
+	    ok(all_sections_match, "section names and order match readelf");
+	}
 
 	int readelf_num_symbols = 0;
 	ok(jutil::read_proc_output("readelf -s " + fname, lines),
@@ -162,21 +189,22 @@ bool ElfTest::run()
 	}
     }
 
-    ok(Elf::PAGE_SIZE > 0, "check we have a sane page size");
-    is((int) Elf::page_align_down(Elf::PAGE_SIZE), Elf::PAGE_SIZE, "pad 1");
-    is((int) Elf::page_align_down(Elf::PAGE_SIZE-1), 0, "pad 2");
-    is((int) Elf::page_align_down(Elf::PAGE_SIZE+1), Elf::PAGE_SIZE, "pad 3");
-    is((int) Elf::page_align_down(2*Elf::PAGE_SIZE), 2*Elf::PAGE_SIZE, "pad 4");
-    is((int) Elf::page_align_down(2*Elf::PAGE_SIZE-1), Elf::PAGE_SIZE, "pad 5");
-    is((int) Elf::page_align_down(2*Elf::PAGE_SIZE+1), 2*Elf::PAGE_SIZE,
+    int page_size = Elf::page_size();
+    ok(page_size > 0, "check we have a sane page size");
+    is((int) Elf::page_align_down(page_size), page_size, "pad 1");
+    is((int) Elf::page_align_down(page_size-1), 0, "pad 2");
+    is((int) Elf::page_align_down(page_size+1), page_size, "pad 3");
+    is((int) Elf::page_align_down(2*page_size), 2*page_size, "pad 4");
+    is((int) Elf::page_align_down(2*page_size-1), page_size, "pad 5");
+    is((int) Elf::page_align_down(2*page_size+1), 2*page_size,
 	    "pad 6");
     
-    is((int) Elf::page_align_up(Elf::PAGE_SIZE), Elf::PAGE_SIZE, "pad 1");
-    is((int) Elf::page_align_up(Elf::PAGE_SIZE-1), Elf::PAGE_SIZE, "pad 2");
-    is((int) Elf::page_align_up(Elf::PAGE_SIZE+1), 2*Elf::PAGE_SIZE, "pad 3");
-    is((int) Elf::page_align_up(2*Elf::PAGE_SIZE), 2*Elf::PAGE_SIZE, "pad 4");
-    is((int) Elf::page_align_up(2*Elf::PAGE_SIZE-1), 2*Elf::PAGE_SIZE, "pad 5");
-    is((int) Elf::page_align_up(2*Elf::PAGE_SIZE+1), 3*Elf::PAGE_SIZE, "pad 6");
+    is((int) Elf::page_align_up(page_size), page_size, "pad 1");
+    is((int) Elf::page_align_up(page_size-1), page_size, "pad 2");
+    is((int) Elf::page_align_up(page_size+1), 2*page_size, "pad 3");
+    is((int) Elf::page_align_up(2*page_size), 2*page_size, "pad 4");
+    is((int) Elf::page_align_up(2*page_size-1), 2*page_size, "pad 5");
+    is((int) Elf::page_align_up(2*page_size+1), 3*page_size, "pad 6");
     
     return true;
 }
@@ -204,6 +232,68 @@ bool ElfTest::teardown()
     return false;
 }
 
+bool ElfTest::mix32_64()
+{
+    return true;
+}
 
 RUN_TEST_CLASS(ElfTest);
+
+list<struct ElfTest::section_info>
+ElfTest::read_section_info(const string &fname)
+{
+    list<struct section_info> retval;
+    list<string> readelf_lines;
+    list<string> captures;
+    bool ranok;
+    bool readelf64 = true;
+    string line, hexsize;
+    string::size_type pos;
+
+    ranok = jutil::read_proc_output("readelf -S " + fname, readelf_lines);
+    ok(ranok, "can readelf the file");
+
+    // Size on same line as name
+    Regexp detect_readelf_32_re;
+    detect_readelf_32_re.compile("Name *Type *Addr *Off *Size");
+
+    Regexp section_start_re;
+    section_start_re.compile("^\\s*\\[ *\\d+] (.+)");
+
+    while (!readelf_lines.empty()) {
+	line = readelf_lines.front();
+	readelf_lines.pop_front();
+
+	if (detect_readelf_32_re.matches(line)) {
+	    readelf64 = false;
+	    continue;
+	}
+
+	if (section_start_re.match_capture(line, captures)) {
+
+	    // Pull the name from the line
+	    struct section_info current_section;
+	    current_section.name = captures.front();
+	    pos = current_section.name.find(' ');
+	    if (pos != string::npos) {
+		current_section.name.erase(pos);
+	    }
+	    //
+	    // Size is either on this line or next, depending on 32/64 readelf
+	    if (readelf64) {
+		line = readelf_lines.front();
+		readelf_lines.pop_front();
+		hexsize = line.substr(8, 16);
+	    }
+	    else {
+		hexsize = line.substr(57, 6);
+	    }
+
+	    current_section.size = strtol(hexsize.c_str(), NULL, 16);
+	    retval.push_back(current_section);
+	}
+    }
+
+    return retval;
+}
 

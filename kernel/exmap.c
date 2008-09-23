@@ -246,7 +246,7 @@ static void store_vmalist_info(struct vm_area_struct *vma_base)
 
 
 /* Copied (and modded) from user_atoi in arch/frv somewhere */
-static unsigned long user_atoul (const char __user * ubuf, size_t len)
+static unsigned long user_atoul (const char __user * ubuf, int len)
 {
 	char buf[16];
 	unsigned long ret;
@@ -304,7 +304,7 @@ static int show_one_page(pte_t pte,
 	
 	len = snprintf (buffer,
 			buflen,
-			"%d %d 0x%08lx\n",
+			"%d %d %lx\n",
 			present,
 			writable,
 			cookie);
@@ -326,7 +326,7 @@ static int show_vma_start(struct exmap_vma_data *vma_data,
 	
 	len = snprintf (buffer,
 			buflen,
-			"VMA 0x%08lx %lu\n",
+			"VMA %lx %lu\n",
 			vma_data->vm_start,
 			vma_data->num_pages);
 

@@ -28,6 +28,8 @@ private:
     static const int NUM_ARRAYS = 10;
     std::list<FILE *> _popen_handles;
 
+    unsigned long get_map_alignment(const Elf::FilePtr &elf);
+
     struct array_info
     {
 	std::string name;
@@ -52,7 +54,7 @@ const string ExmapTest::MI_EXE = UTILDIR + "/mapit";
 const string ExmapTest::MI_DAT = "mapit.dat";
 const string ExmapTest::SA_LIB = UTILDIR + "/libsharedarray.so";
 const int ExmapTest::NUM_INSTANCES = 10;
-const int ExmapTest::ARRAY_SIZE = 100 * Elf::PAGE_SIZE;
+const int ExmapTest::ARRAY_SIZE = 100 * Elf::page_size();
 const struct ExmapTest::array_info ExmapTest::ARRAY_INFO[] = {
 
     { "donttouch", 0, 0, false, true },
@@ -164,14 +166,15 @@ bool ExmapTest::run()
     }
 
 
+    unsigned long map_alignment = get_map_alignment(file->elf());
+
     for (proc_it = procs.begin();
 	 proc_it != procs.end();
 	 ++proc_it) {
 	sizes = proc->sizes(file);
-	long arrays_size = NUM_ARRAYS * ARRAY_SIZE;
-	float delta = std::abs(arrays_size - (long) sizes->val(Sizes::VM));
-	delta /= arrays_size;
-	ok(delta < 0.01, "Shared lib has correct size in each proc");
+	is_approx_rel(sizes->val(Sizes::VM),
+		      (double) NUM_ARRAYS * (double) ARRAY_SIZE + map_alignment,
+		      0.01, "Shared lib has correct size in each proc");
     }
     
     Elf::SectionPtr text = file->elf()->section(".text");
@@ -202,12 +205,12 @@ bool ExmapTest::run()
 
     is_approx(data_sizes->val(Sizes::MAPPED),
 	      bss_sizes->val(Sizes::MAPPED),
-	      Elf::PAGE_SIZE,
+	      Elf::page_size(),
 	      "data and bss mapped within page of each other");
     
     is_approx(data_sizes->val(Sizes::RESIDENT),
 	      bss_sizes->val(Sizes::RESIDENT),
-	      Elf::PAGE_SIZE,
+	      Elf::page_size(),
 	      "data and bss resident within page of each other");
 
 
@@ -237,11 +240,11 @@ bool ExmapTest::run()
 	sizes = proc->sizes(file, data->mem_range());
 	is_approx(sizes->val(Sizes::RESIDENT),
 		  data_resident_arrays_size,
-		  Elf::PAGE_SIZE,
+		  Elf::page_size(),
 		  "resident size for data in proc correct with a page");
 	is_approx(sizes->val(Sizes::WRITABLE),
 		  data_writable_arrays_size,
-		  Elf::PAGE_SIZE,
+		  Elf::page_size(),
 		  "writable size for data in proc correct with a page");
 	
 	sizes = proc->sizes(file, bss->mem_range());
@@ -350,7 +353,7 @@ bool ExmapTest::run()
 
 bool ExmapTest::setup()
 {
-    plan(196);
+    plan(197);
     
     const string ld_path_env = "LD_LIBRARY_PATH";
     const char *cp = getenv(ld_path_env.c_str());
@@ -410,3 +413,28 @@ double ExmapTest::get_pid_size_from_ps(pid_t pid)
 }
 
 RUN_TEST_CLASS(ExmapTest);
+
+unsigned long ExmapTest::get_map_alignment(const Elf::FilePtr &elf)
+{
+    list<Elf::SegmentPtr> segs = elf->loadable_segments();
+    list<Elf::SegmentPtr>::iterator it;
+    unsigned long alignment = 0;
+    bool all_aligns_the_same = true;
+
+    for (it = segs.begin(); it != segs.end(); ++it) {
+	if (alignment == 0) {
+	    // Get the alignment
+	    alignment = (*it)->align();
+	}
+	else {
+	    // Check they're all the same
+	    if (alignment != (*it)->align()) {
+		all_aligns_the_same = false;
+	    }
+	}
+    }
+
+    ok(all_aligns_the_same,
+       "ELF file has all loadable segments with same alignment\n");
+    return alignment;
+}
