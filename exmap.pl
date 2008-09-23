@@ -351,7 +351,9 @@ sub _set_all_col_sortfunc
 	return +1 if not defined $a;
 	return -1 if not defined $b;
 
-        if ($a =~ /^[\d\.]+$/ && $b =~ /^[\d\.]+$/) {
+	# Allow various numeric seperators, to be more locale friendly
+	my $number_re = qr/^[\d\.,_]+$/;
+        if ($a =~ $number_re && $b =~ $number_re) {
 	    $a <=> $b;
 	}
 	else {

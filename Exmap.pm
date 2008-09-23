@@ -388,7 +388,6 @@ sub sizes
     my $file = shift;
     my $elf_range = shift;
 
-
     my @maps = $s->maps;
     warn ("No maps in process", $s->pid) unless @maps;
     if ($file) {
@@ -521,7 +520,7 @@ sub _calc_vma_maps
     my $previous_file;
     foreach my $vma (@vmas) {
 	my $file = $filepool->get_or_make_file($vma->{info}->{file});
-
+	$file->add_proc($s);
 	my @vma_maps = $vma->calc_maps($file,
 				       $previous_vma,
 				       $previous_file,
@@ -856,7 +855,9 @@ sub calc_maps
     else {
 	# Cases 2a and 2b
 	my $non_elf_map;
-	if ($previous_vma->is_file_backed
+	if ($previous_vma
+	    && $previous_file
+	    && $previous_vma->is_file_backed
 	    && $previous_file->is_elf
 	    && $s->range->start == $previous_vma->range->end) {
 
@@ -1007,7 +1008,7 @@ sub elf_to_mem_range
 sub sizes_for_mem_range
 {
     my $s = shift;
-    my $mrange = shift;
+    my $mrange = shift; # Optional -covers whole map if unspecified.
 
     my $subrange = $mrange
 	? $s->mem_range->intersect($mrange)
@@ -1028,6 +1029,8 @@ sub sizes_for_mem_range
 	if ($info->{page}->is_mapped) {
 	    $sizes->{eff_mapped_size} += $info->{bytes} / $count;
 	    $sizes->{mapped_size} += $info->{bytes};
+	    $sizes->{sole_mapped_size} += $info->{bytes}
+		if ($count == 1);
 	}
 	if ($info->{page}->is_resident) {
 	    $sizes->{eff_resident_size} += $info->{bytes} / $count;
@@ -1070,6 +1073,7 @@ sub new
 
     my $pfn = shift;
     my $swap_entry = shift;
+
     # We store a lot of these, so trim down the string lengths
     $pfn =~ s/^0x//;
     $swap_entry =~ s/^0x//;
@@ -1080,17 +1084,17 @@ sub new
     $pfn =~ s/00000000/0/g;
     $swap_entry =~ s/00000000/0/g;
 
-    my $self = $pfn . "X" . $swap_entry;
+    my $self = $pfn . 'X' . $swap_entry;
     my $s = \$self;
     bless $s, $c;
 
-    die("Page has valid pfn and swap_entry")
+    die('Page has valid pfn and swap_entry')
 	if ($s->is_resident && $s->is_swapped);
 
     return $s;
 }
 
-# The cookie is the object
+# The cookie is the scalar referenced by the object
 sub cookie
 {
     my $s = shift;
@@ -1128,11 +1132,12 @@ sub new
 }
 
 my %SIZE_NAMES = (
-		  vm_size => "VM",
-		  resident_size =>  "Resident",
+		  eff_mapped_size => "Eff. Mapped",
 		  eff_resident_size => "Eff. Resident",
 		  mapped_size => "Mapped",
-		  eff_mapped_size => "Eff. Mapped",
+		  resident_size =>  "Resident",
+		  sole_mapped_size => "Sole Mapped",
+		  vm_size => "VM",
 		 );
 
 sub keys

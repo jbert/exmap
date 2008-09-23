@@ -4,7 +4,7 @@
 #
 use strict;
 use warnings;
-use Test::More tests => 117;
+use Test::More tests => 128;
 
 use constant PAGE_SIZE => 4096;
 
@@ -88,6 +88,13 @@ my $file = shift @files;
 ok($file->is_elf, "file recognised as an elf file");
 
 # All our procs should be mapping our shared lib
+
+my @procs_for_file = $file->procs;
+is(scalar @procs_for_file, $NUM_INSTANCES, "right number of procs for file");
+foreach my $proc (@procs_for_file) {
+    ok($proc->exe_name =~ /$SA_EXE$/, "each proc mapping lib is one of ours");
+}
+
 foreach my $proc (@procs) {
     $sizes = $proc->sizes($file);
     my $arrays_size = $NUM_ARRAYS * $ARRAY_SIZE;

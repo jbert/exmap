@@ -1,15 +1,7 @@
-- update release date on changes.html
+- try and show thread stack usage
+	- maybe additional info from kernel module?
 
 - support earlier kernel versions (no pud_t. See mail from Joaquim)
-
-- 0.6
-	DONE? - resolve NFS root quash issue
-	DONE? - try and fix lockup bug
-	Not yet :-( - possibly try on FC4
-	- update doc
-		- update changelog
-		- update TODO list
-	DONE - add GPL
 
 - is there a way to avoid the sysread/seek for each string name in ELF?
 	- maybe read the string table in chunks?
