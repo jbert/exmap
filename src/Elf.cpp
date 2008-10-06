@@ -5,7 +5,6 @@
 
 #include <sstream>
 #include <unistd.h> // getpagesize()
-#include <string.h>
 
 using namespace std;
 using namespace jutil;

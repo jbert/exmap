@@ -5,7 +5,6 @@
 #include <unistd.h>
 #include <limits.h>
 #include <dirent.h>
-#include <string.h>
 
 using namespace std;
 using namespace jutil;

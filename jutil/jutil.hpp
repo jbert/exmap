@@ -7,11 +7,10 @@
 #include <map>
 
 #include <stdio.h>
-#include <stdlib.h>
 
-#include <unistd.h> // For getuid/setuid
+// For getuid/setuid
+#include <unistd.h>
 #include <sys/types.h>
-#include <cstdlib> // for getenv
 
 namespace jutil
 {
