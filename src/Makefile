@@ -1,6 +1,6 @@
-CXX=g++
-LD=g++
-JUTILDIR=../jutil
+CXX ?= g++
+LD = $(CXX)
+JUTILDIR =../jutil
 
 #CXXFLAGS += -pg
 #LDFLAGS += -pg
@@ -79,7 +79,7 @@ gexmap: $(GEM_OBJ)
 	$(LD) -o gexmap $(GEM_OBJ) $(LDFLAGS) $(GTKLDFLAGS)
 
 gexmap.o: gexmap.cpp
-	$(CC) $(CXXFLAGS) $(GTKCXXFLAGS) -c $<
+	$(CXX) $(CXXFLAGS) $(GTKCXXFLAGS) -c $<
 
 exmtool: $(CL_OBJ)
 	$(LD) -o exmtool $(CL_OBJ) $(LDFLAGS) 
