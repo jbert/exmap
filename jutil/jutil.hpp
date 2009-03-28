@@ -12,6 +12,9 @@
 #include <unistd.h>
 #include <sys/types.h>
 
+#include <stdlib.h>     // for getenv
+#include <string.h>     // for strncpy
+
 namespace jutil
 {
     // ------------------------------------------------------------
