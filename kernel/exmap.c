@@ -34,6 +34,7 @@
 #include <linux/vmalloc.h>
 #include <linux/swap.h>
 #include <linux/swapops.h>
+#include <linux/sched.h>
 
 /* Allow compilation on some kernels prior to 2.6.11 */
 
@@ -41,6 +42,15 @@
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,11)
 #define HAVE_PUD_T
 #endif
+
+static struct task_struct *my_find_task_by_pid(pid_t pid) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
+    /* The pid has come from userspace, so we can use f_t_b_vpid to look up */
+    return find_task_by_vpid(pid);
+#else
+    return find_task_by_pid(pid);
+#endif
+}
 
 
 
@@ -392,7 +402,7 @@ int setup_from_pid(pid_t pid)
 	struct task_struct *tsk;
 	int errcode = -EINVAL;
 
-	tsk = find_task_by_pid(pid);
+	tsk = my_find_task_by_pid(pid);
 	if (tsk == NULL) {
 		printk (KERN_ALERT
 			"/proc/%s: can't find task for pid %d\n",
