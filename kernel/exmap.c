@@ -44,7 +44,9 @@
 #endif
 
 static struct task_struct *my_find_task_by_pid(pid_t pid) {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,28)
+    return pid_task(find_pid_ns(pid, &init_pid_ns), PIDTYPE_PID);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,26)
     /* The pid has come from userspace, so we can use f_t_b_vpid to look up */
     return find_task_by_vpid(pid);
 #else
@@ -525,7 +527,7 @@ int init_module ()
 	
 	exmap_proc_file->read_proc = procfile_read;
 	exmap_proc_file->write_proc = procfile_write;
-	exmap_proc_file->owner = THIS_MODULE;
+//	exmap_proc_file->owner = THIS_MODULE;
 	
 	/*     exmap_proc_file->mode         = S_IFREG | S_IRUGO; */
 	/* TODO - this is quite probably a security problem */
