@@ -1,6 +1,8 @@
 #include "TestRunner.hpp"
 #include "Pcre.hpp"
 
+#include <stdio.h>      // For BUFSIZ
+
 using namespace std;
 
 /// TODO: use a decent lib instead of these hacks
