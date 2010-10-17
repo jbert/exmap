@@ -159,6 +159,9 @@ make docs
 
 
 %changelog
+* Sun Oct 17 2010 Paul Morgan <jumanjiman@gmail.com> 0.11-2.pre0
+- add README.fedora with build instructions (jumanjiman@gmail.com)
+
 * Sun Oct 17 2010 Paul Morgan <jumanjiman@gmail.com> 0.11-1.pre0
 - new package built with tito
 
