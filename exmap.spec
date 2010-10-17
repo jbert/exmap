@@ -39,7 +39,7 @@ Name:      exmap
 Summary:   see how much memory is in use by different processes
 
 Version:   0.11
-Release:   2%{?dist}%{?upstream_tag}
+Release:   3%{?dist}%{?upstream_tag}
 
 Group:     Applications/Engineering
 License:   GPLv2
@@ -56,6 +56,7 @@ BuildRoot: %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 BuildRequires: pcre-devel
 BuildRequires: boost-devel
 BuildRequires: gtkmm24-devel
+BuildRequires: asciidoc
 
 Requires: pcre
 Requires: boost
