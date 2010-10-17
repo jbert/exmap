@@ -39,7 +39,7 @@ Name:      exmap
 Summary:   see how much memory is in use by different processes
 
 Version:   0.11
-Release:   1%{?dist}%{?upstream_tag}
+Release:   2%{?dist}%{?upstream_tag}
 
 Group:     Applications/Engineering
 License:   GPLv2
@@ -93,6 +93,7 @@ are more useful in this case.
 %doc FAQ.html
 %doc screenshots/screenshot-processes.png
 %doc screenshots/screenshot-files.png
+%doc README.fedora
 %{_bindir}/gexmap
 
 
