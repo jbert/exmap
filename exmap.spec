@@ -160,6 +160,9 @@ make docs
 
 
 %changelog
+* Sun Oct 17 2010 Paul Morgan <jumanjiman@gmail.com> 0.11-3.pre0
+- build requires asciidoc (jumanjiman@gmail.com)
+
 * Sun Oct 17 2010 Paul Morgan <jumanjiman@gmail.com> 0.11-2.pre0
 - add README.fedora with build instructions (jumanjiman@gmail.com)
 
