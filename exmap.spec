@@ -158,3 +158,6 @@ make docs
 
 
 %changelog
+* Sun Oct 17 2010 Paul Morgan <jumanjiman@gmail.com> 0.11-1.pre0
+- new package built with tito
+
