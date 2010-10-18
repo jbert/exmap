@@ -92,6 +92,10 @@ are more useful in this case.
 %doc COPYING
 %doc TODO
 %doc README.fedora
+%doc doc.asciidoc
+%doc FAQ.asciidoc
+%doc screenshots/screenshot-processes.png
+%doc screenshots/screenshot-files.png
 %{_bindir}/elftool
 
 # ----------- GUI subpackage ----------------
@@ -118,9 +122,7 @@ are more useful in this case.
 %files gnome
 %defattr(-,root,root,-)
 %{_bindir}/gexmap
-%doc doc.asciidoc
 %doc doc.html
-%doc FAQ.asciidoc
 %doc FAQ.html
 %doc screenshots/screenshot-processes.png
 %doc screenshots/screenshot-files.png
