@@ -118,7 +118,7 @@ The *processes* tab has:
 * list of ELF sections within the selected file and process
 * list of ELF symbols within the selected section
 
-image::screenshots/screenshot-processes.png[Screenshot of Processes tab]
+image::screenshot-processes.png[Screenshot of Processes tab]
 
 NOTE: Most system binaries and libraries do not contain any symbols
 (they have been _stripped_), so the bottom list will generally
@@ -130,7 +130,7 @@ Files Tab
 The *files* tab is similar, but reverses the roles of file and
 process in the first two links:
 
-image::screenshots/screenshot-processes.png[Screenshot of Processes tab]
+image::screenshot-processes.png[Screenshot of Processes tab]
 
 
 

@@ -94,8 +94,8 @@ are more useful in this case.
 %doc README.fedora
 %doc doc.asciidoc
 %doc FAQ.asciidoc
-%doc screenshots/screenshot-processes.png
-%doc screenshots/screenshot-files.png
+%doc screenshot-processes.png
+%doc screenshot-files.png
 %{_bindir}/elftool
 
 # ----------- GUI subpackage ----------------
@@ -124,8 +124,8 @@ are more useful in this case.
 %{_bindir}/gexmap
 %doc doc.html
 %doc FAQ.html
-%doc screenshots/screenshot-processes.png
-%doc screenshots/screenshot-files.png
+%doc screenshot-processes.png
+%doc screenshot-files.png
 
 
 # ----------- kmod subpackage ----------------
