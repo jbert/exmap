@@ -96,6 +96,7 @@ are more useful in this case.
 %doc screenshots/screenshot-files.png
 %doc README.fedora
 %{_bindir}/gexmap
+%{_bindir}/elftool
 
 
 
@@ -151,7 +152,8 @@ make docs
 
 # userland
 %{__mkdir_p} %{buildroot}%{_bindir}
-%{__install} -p src/gexmap %{buildroot}%{_bindir}
+%{__install} -pm 755 src/gexmap %{buildroot}%{_bindir}
+%{__install} -pm 755 src/elftool %{buildroot}%{_bindir}
 
 # kmod
 %{__mkdir_p} %{buildroot}/lib/modules/%{my_verrel}%{?dotvariant}/extra/%{kmod_name}
