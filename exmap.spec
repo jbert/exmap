@@ -48,7 +48,7 @@ Name:      exmap
 Summary:   see how much memory is in use by different processes
 
 Version:   0.11
-Release:   4%{?dist}%{?upstream_tag}
+Release:   5%{?dist}%{?upstream_tag}
 
 Group:     Applications/Engineering
 License:   GPLv2
@@ -186,6 +186,11 @@ make docs
 
 
 %changelog
+* Sun Oct 17 2010 Paul Morgan <jumanjiman@gmail.com> 0.11-5.pre0
+- move screenshots to base directory (jumanjiman@gmail.com)
+- better split of docs between pkgs (jumanjiman@gmail.com)
+- split userland tool into 2 packages, base and -gnome (jumanjiman@gmail.com)
+
 * Sun Oct 17 2010 Paul Morgan <jumanjiman@gmail.com> 0.11-4.pre0
 - add elftool userland tool to package (jumanjiman@gmail.com)
 
