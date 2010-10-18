@@ -5,6 +5,7 @@
 *.o
 *.ko
 *.html
+html/
 jutil/egtest
 jutil/libjutil.a
 jutil/trun
