@@ -14,6 +14,15 @@
 # Use global instead of define for scoping as recommended at:
 # http://fedoraproject.org/wiki/Packaging/Guidelines#.25global_preferred_over_.25define
 
+BuildRequires: pcre-devel
+BuildRequires: boost-devel
+BuildRequires: gtkmm24-devel
+BuildRequires: asciidoc
+
+# redhat-rpm-config provides /usr/lib/rpm/redhat/kmodtool
+BuildRequires: redhat-rpm-config
+buildrequires: kernel-devel
+
 %global kmod_name exmap
 
 # define the full path to kmodtool
@@ -53,14 +62,8 @@ URL:       http://github.com/jbert/exmap
 Source0:   %{name}-%{version}.tar.gz
 BuildRoot: %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
-BuildRequires: pcre-devel
-BuildRequires: boost-devel
-BuildRequires: gtkmm24-devel
-BuildRequires: asciidoc
-
 Requires: pcre
 Requires: boost
-Requires: gtkmm24
 Requires: %{kmod_name}-kmod >= %{?epoch:%{epoch}:}%{version}-%{release}
 
 %description
@@ -88,16 +91,39 @@ are more useful in this case.
 %doc README
 %doc COPYING
 %doc TODO
+%doc README.fedora
+%{_bindir}/elftool
+
+# ----------- GUI subpackage ----------------
+%package gnome
+Summary: GUI tool to see how much memory is in use by different processes
+Requires: exmap = %{version}-%{release}
+Requires: gtkmm24
+
+%description gnome
+Provides the graphical version of exmap.
+
+Exmap is a tool which allows you to see how much memory is in
+use by different processes, mapped files, ELF sections and ELF
+symbols at a given moment in time.
+
+It accounts for shared memory in the following way: when a page
+of memory is found to be shared between N processes, the totals
+for each process are given a 1/N share of that page.
+
+Exmap doesn't allow you to see details on how and where memory on
+the heap is allocated. Tools such as valgrind/massif and memprof
+are more useful in this case.
+
+%files gnome
+%defattr(-,root,root,-)
+%{_bindir}/gexmap
 %doc doc.asciidoc
 %doc doc.html
 %doc FAQ.asciidoc
 %doc FAQ.html
 %doc screenshots/screenshot-processes.png
 %doc screenshots/screenshot-files.png
-%doc README.fedora
-%{_bindir}/gexmap
-%{_bindir}/elftool
-
 
 
 # ----------- kmod subpackage ----------------
@@ -105,10 +131,6 @@ are more useful in this case.
 
 Summary:  %{kmod_name} kernel module(s)
 Group:    System Environment/Kernel
-
-# redhat-rpm-config provides /usr/lib/rpm/redhat/kmodtool
-BuildRequires: redhat-rpm-config
-buildrequires: kernel-devel
 
 # needed for plague to make sure it builds for i586 and i686
 ExclusiveArch:  i586 i686 x86_64 ppc ppc64
