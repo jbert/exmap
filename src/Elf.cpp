@@ -578,7 +578,7 @@ bool Section::is_nobits()
 std::string Section::find_string(istream &is, int index)
 {
     if (!is_string_table() || index < 0) {
-	return false;
+	return "";
     }
 
     int offset = _sectstruct->offset() + index;
