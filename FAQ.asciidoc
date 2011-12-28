@@ -1,0 +1,145 @@
+Exmap FAQ
+=========
+
+[qanda]
+
+What is exmap?::
+Exmap is a tool which allows you to see how much memory is in use by
+different processes, mapped files, ELF sections and ELF symbols at a
+given moment in time.
+It accounts for shared memory in the following way: *when a page of
+memory is found to be shared between N processes, the totals for each
+process are given a 1/N share of that page*.
+
+Can I see details on how and where memory on the heap is allocated?::
+No. Tools such as `valgrind`, `massif`, and `memprof` are more
+useful in this case.
+
+How do I know what the latest version of Exmap is?::
+Look in the download directory or ask me to mail you when
+a new version is released. Better yet, watch the official 
+Github repo at http://github.com/jbert/exmap[].
+
+Should I run Exmap as root?::
+It depends. Different kernels/distributions appear to set
+different permissions on the `/proc/X/maps` files, which could
+result in less accurate numbers when running as non-root.
+If you get similar numbers (e.g. for the TOTALS row) as root and
+non-root, then just run as your non-root user. Otherwise run as
+root.
++
+NOTE: part of the `exmap` code runs in kernel space anyway, so you
+aren't protecting your system from any malicious intent on my
+part by running as non-root. All you'll do is protect yourself
+from any accidental stupidity on my part.
+
+How do I use Exmap? What do the numbers mean?::
+The kernel module exports a per-page cookie for each page in each
+vma in each process. If the page is untouched, this is the zero
+cookie (no swap or RAM used for that VM range). Such a page
+contributes to the 'VM' measure but nothing else. A nonzero
+cookie contributes to 'Mapped'.
++
+[The 'effective' measures use the fact that two pages in two
+procs with the same cookie are the same page - so it can
+apportion the memory use fairly between the procs.]
++
+A cookie is either a page frame number (unique id for each page
+of physical RAM) or a swap cookie (unique id for each page of
+swap). A PFN contributes to 'Resident'.
++
+Please take a look at the documentation for a longer (but not
+necessariy more clear) explanation
+
+On which platforms does exmap run?::
+Exmap is Linux kernel-specific, since it uses a Linux kernel loadable
+module.  Additionally, the kernel module requires a fairly
+recent kernel (2.6.8 works, as may some earlier 2.6) in order to
+successfully compile or run.  Exmap is built and tested on Ubuntu
+(i686), and most versions now receive testing on Ubuntu (amd64),
+Fedora Core (i686) and Debian (i686).  Exmap has been reported as
+building and running successfully on an OpenSuse 10.2 beta system
+as well as Fedora 13 x86_64 (`exmap-0.11-pre0`).
+Exmap may also be packaged for debian, so you may be able to
+find it with your favourite apt-related tool (if you're running
+testing or unstable).
+Please let me know if you have problems running on a particular
+platform or can confirm that Exmap works on a particular platform
+not listed here.
+
+What happened to the perl-based version?::
+The old perl version is shipped in the `perl-deprecated` directory.
+For performance reasons, the perl-based `exmap.pl` tool was
+re-written in `C++` (as `gexmap`) with version 0.8. 
+With version 0.9, the `C++` version is 64-bit friendly. 
+The perl version will probably disappear at some point.
+
+What do I need to build exmap?::
+You'll need the basic development tools such as `g++`, `gcc`, `make`
+etc. `g++` version 3.4 or higher is needed. Additionally, since
+part of `exmap` is a loadable kernel module, you'll need the kernel
+headers for your current kernel installed.
++
+On Ubuntu, you can arrange this with:
++
+----
+sudo apt-get install build-essential linux-kernel-headers libpcre3-dev libboost-dev pcre-devel libgtkmm-2.4-dev
+----
++
+NOTE: Debian systems probably have the same package names as Ubuntu,
+but I haven't verified that.
++
+On Fedora, you can run:
++
+----
+yum groupinstall 'Development Tools'
+yum install kernel-devel boost-devel pcre-devel gtkmm24-devel
+----
++
+If you cannot find `gtkmm` 2.4, you can try this patch:
++
+----
+--- gexmap.cpp  (revision 1255)
++++ gexmap.cpp  (working copy)
+@@ -398,9 +398,8 @@
+
+int sort_colid = -1;
+for (int i = 0; i < Exmap::Sizes::NUM_SIZES; ++i) {
+-       int colid = _treeview.append_column_numeric(Exmap::Sizes::size_name(i),
+-                                                   _size_columns[i],
+-                                                   SIZES_PRINTF_FORMAT);
++       int colid = _treeview.append_column(Exmap::Sizes::size_name(i),
++                                                   _size_columns[i]);
+----
+
+What do I need to run exmap?::
+You'll need the run-time equivalents of the above development
+packages, but they should either already be on your system or be
+installed as a dependency when you installed the dev packages.
+The earlier, perl-based versions of exmap required the GTK perl
+bindings, version 0.8 and higher do not.
+
+Exmap just hangs on startup, chewing 100% CPU!::
+With the re-write to C++, the startup time should be down to a
+few-second pause, rather than a 30-second wait. If you get long
+startup times on your system, please let me know (I'm not sure
+how the startup time scales to large-RAM systems, for example).
+
+My box just locked up!::
+Prior to version 0.6, the kernel module could deadlock under
+memory pressure. This shouldn't occur with recent versions.
+
+Exmap uses too much memory::
+Again, the `C++` rewrite should have mitigated this. The perl
+version consumed approx 90 MiB to analyse my 512 MiB desktop,
+the `C++` version requires approx 30 MiB for a similar setup.
+
+At startup I get `File::load - can't open file: /foo/bar`::
+You can avoid them by running `gexmap` as root, but there isn't 
+really any need to do this as the warnings are fairly harmless.
+You may have a root-owned process running which is using `mmap()`
+on files not readable by your userid. (On my system I get
+these warnings from a file in `/var/lib/samba`.) 
+
+If you have any comments or questions on these pages or Exmap,
+then please let me know.

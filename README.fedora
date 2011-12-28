@@ -1,0 +1,26 @@
+The spec file for exmap automatically builds:
+* exmap
+* kmod-exmap
+
+It works for me on Fedora 13.
+
+I happen to be using an x86_64 kernel, so the upstream code and
+my spec file work as of the date the spec file was created.
+
+I use `tito` to build RPMs from a Git repo, including exmap.
+For more info, see:
+  http://github.com/dgoodwin/tito
+
+When building exmap with tito, it's important to maintain version
+consistency with upstream.  Since I'm adding a spec and docs
+(but not the underlying source):
+
+* change stuff & possibly bump release
+* git commit
+* ensure it builds:    tito build --test --rpm
+* tag a working build: tito tag --keep-version
+* push my changes:     git push && git push --tags
+* finalize the build:  tito build --rpm
+
+If you would like to improve my spec file, please fork the repo,
+make your changes, and issue a pull request via github.

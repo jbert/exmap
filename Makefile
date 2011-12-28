@@ -20,3 +20,10 @@ clean: $(SUBDIRS)
 
 test: build
 	make -C src test
+
+# Asciidoc is fairly human-readable, but you can
+# use asciidoc to convert the plain-text source docs
+# into HTML. This has been tested on asciidoc-8.4.5.
+docs: doc.asciidoc FAQ.asciidoc screenshot-processes.png screenshot-files.png
+	asciidoc -b html4 doc.asciidoc
+	asciidoc -b html4 FAQ.asciidoc
