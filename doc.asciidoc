@@ -1,0 +1,287 @@
+EXMAP
+=====
+
+Introduction
+------------
+
+Exmap is a utility which takes a snapshot of how the physical memory and
+swap space are currently used by all the processes on your system. It
+examines which page of memory are shared between which processes, so that
+it can share the cost of the pages fairly when calculating usage totals.
+
+Some software systems (e.g. the GNOME and KDE desktop environments)
+consist of dozens of processes, each loading dozens of shared libraries.
+
+Modern operating systems, such as Linux, try to reduce physical memory
+usage with various techniques. Firstly, binaries (including libraries) are
+generally _demand paged_. This means that only the parts of the library
+which are actually used by a process get loaded in from disk. Also, two
+different processes which both load a shared library will share any
+read-only pages. Lastly, for writable pages, a scheme called _copy on
+write_ is used. This means that potentially-writable pages are initially
+shared between processes, but when one process writes to a page it is
+given its own private copy of that page with that change.
+
+Together, these facilities make it very difficult to work out how memory
+is actually used. Particularly because the Linux kernel doesn't export
+enough information to user-space to work out which processes share which
+pages.
+
+Hence Exmap includes a loadable kernel module, `exmap.ko`, which exports
+information on the page usage of a process, via a simple interface using
+an entry in `/proc`. This information is collated by a userspace process and
+displayed in a GUI (written with the `C++` binding to the GTK+ toolkit,
+`gtkmm`).
+
+Compiling
+---------
+
+After unpacking the tarball you should run the commands:
+
+----
+make
+sudo insmod ./exmap.ko
+make test
+----
+
+If all goes well, you'll see some test output (including some warning
+messages) and a final line: _All tests passed successfully_.
+
+If problems occur, check that your system meets the build and kernel
+requirements mentioned in the FAQ.
+
+Kernel module code effectively runs under root privileges. You
+should apply the same concerns and cautions as you would with running code
+from any other source as `root`. In particular, the `exmap.ko` module allows
+any process to read the per-page mapping information of any other process.
+Whilst I can't envisage a way this might be used as a privilege escalation
+attack, it is probably not wise to run `exmap` on a multi-user system where
+unfriendly users are a possibility.
+
+Additionally, buggy code in kernel mode can completely lock your machine,
+so please don't try this with unsaved work in any applications. You may
+also want to run the command 'sync' before running exmap. Previous
+versions of Exmap have caused completely locked machines. Use at your own
+risk!
+
+[WARNING]
+=========
+* Do not run `exmap` on a multi-user system where unfriendly
+users are a possibility
+* Save your work in any applications before loading the `exmap`
+kernel module
+=========
+
+
+Running
+-------
+
+From the top-level dir, you can run `exmap` with the command:
+
+----
+src/gexmap
+----
+
+To run as root, run:
+
+----
+sudo src/gexmap
+----
+
+Running as root may be necessary for accurate numbers on some
+distributions and/or kernel versions, depending on the file permissions on
+the `/proc/X/maps` files on your system.
+
+
+User Interface
+~~~~~~~~~~~~~~
+
+There are two tabs: *Processes* and *Files*, allowing you to
+examine the data from different perspectives. Each of these tabs
+has four lists, becoming more specific as you move downwards.
+
+If you select a process and a file which is an ELF file (any shared
+library or executable) you will see a list of ELF sections in the third
+list. Selecting an ELF section will cause information on the symbols
+within that section to be displayed in the bottom list. 
+
+NOTE: You don't have to build binaries with the `-g` option to get
+this per-symbol information. You just need to avoid running the
+`strip` command on the binaries you produce.
+
+Processes Tab
+^^^^^^^^^^^^^
+The *processes* tab has: 
+
+* list of all processes
+* list of files mapped by the selected process
+* list of ELF sections within the selected file and process
+* list of ELF symbols within the selected section
+
+image::screenshot-processes.png[Screenshot of Processes tab]
+
+NOTE: Most system binaries and libraries do not contain any symbols
+(they have been _stripped_), so the bottom list will generally
+remain blank unless you are examining binaries you have built
+yourself.
+
+Files Tab
+^^^^^^^^^
+The *files* tab is similar, but reverses the roles of file and
+process in the first two links:
+
+image::screenshot-processes.png[Screenshot of Processes tab]
+
+
+
+ELF Sections
+~~~~~~~~~~~~
+
+Here's a crib sheet to some of the important ELF sections (corrections and
+additions gratefully received):
+
+`.text`::
+This contains the majority of the executable code for the
+exe/lib. It is read-only and hence any pages mapped are shared amongst
+all processes which reference them. There is a subtlety here where
+process A and process B might both map library L, but access different
+pages. Exmap accounts for this by accounting the pages used solely by
+process A to A, similarly for B and 1/2 a page for each page
+referenced by both A and B.
+
+`.data`::
+This is static, global or file-scope data in the app. This is
+generally mapped read/write by the OS. Pages which are read will be
+initially shared amongst processes in the same way as readonly pages.
+Pages which are then written to will cause a COW (copy on write) fault
+which will cause the process to get a private copy of the entire page
+in which the write occured.
+
+`.rodata`::
+This contains items such as string constants and any .data
+items the compiler has determined are read-only. This is typically
+mapped read-only into memory (along with the .text section), and hence
+should be shared amongst all processes.
+
+`.bss`::
+As for `.data`, but the items are zero or uninitialised (which
+the C standard requires to mean 'initialised to zero'). The OS can
+play games here to reduce the memory usage. In particular, it seems
+that all `.bss` pages which have only been read (and hence still contain
+zeros) are actually one system-wide zero page. Which is nice.
+
+Interpreting the numbers
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Terminology: although _swapping_ originally referred to writing an entire
+process to the swap file, in this documentation I'll tend to say _paging
+in_ if I mean reading in from a non-swap file (demand paging) and
+_swapping in_ or _swapping out_ for reading and writing pages to or from
+the swap area. Apologies if thats confusing and particularly so if I'm
+inconsistent.
+
+In general, all the measured items (processes, files, ELF sections,
+symbols) are given the following sizes:
+
+VM::
+This is the virtual memory size. For a process, this is how much
+address space it has (how many bytes it could read without causing a
+segault). This says nothing about how much physical memory or swap the
+item is occupying, but is one measure of how big it is. For a process,
+this should correspond to the 'VIRT' column in "top". For example,
+apache2 and X server processes typically have large virtual sizes,
+without necessarily occupying much physical memory. This measurement
+doesn't change as processes are swapped in and out.
++
+As an example, a processes which calls `malloc(10*1024*1024)` will
+increase its VM size by 10 MiB. If it doesn't read or write that
+memory, it probably won't take up any additional swap space or
+physical RAM.
+
+Resident size::
+This is the amount of the virtual address space which
+is mapped to physical RAM. If there was no shared memory, this would
+be the physical memory usage of the process. This figure will vary
+according to how much of the process has been demand-paged in or
+swapped out. For a process, this should correspond to the 'RES' value
+in top.
++
+If processes A and B both load library L and process A has
+paged in some of that library but B has not accessed those pages, the
+'resident' size for those pages will be solely accounted to process A.
+The resident size for B is only dependent on pages currently mapped
+and resident by B.
++
+Kernel info: this corresponds to `pte_present()`.
+
+Mapped size::
+This is the amount of the virtual address space which
+has been allocated some storage, either physical RAM or swap space. If
+there was no shared memory, this would be the memory usage of the
+process.
++
+This figure won't vary as a page is swapped in or out (since it
+remains mapped) but under memory pressure some pages which were mapped
+(e.g. .text sections containing executable code) may be discarded
+(since they can just be loaded back in from the backing file). Such
+discarding of pages will reduce the mapped figure.
++
+There is currently no way to discriminate between unmapped chunks of
+file-backed address space which have never been touched and those
+which have been discarded due to memory pressure.
++
+Kernel info: this corresponds to a non-zero `pfn` or `swp_entry`.
+
+Sole Mapped Size::
+This is as for 'Mapped Size', but only includes
+pages which are currently in sole use by the one process. This
+includes all COW and unshareable pages, as well as pages which could
+be shared but no other process has yet had cause to map them.
++
+Kernel info: this page is referenced by only one `pte` or `swp_entry`.
+
+Writable::
+This shows memory stored in pages which are marked by the
+kernel as currently writable by the process - i.e. those which won't
+incur a page fault if a write is attempted. This isn't simply the same
+thing as a writable mmap() or VMA. Such maps are writable-in-theory
+but the underlying pages are initially marked as non-writable as part
+of the COW mechanism. Only when a write has occurred and a
+copy-on-write (COW) occured wll the new page be marked as writable.
++
+So for some items in the UI (e.g. an ELF file) the 'writable' value is
+a rough approximation to the amount of COW'd memory associated with
+it. Another way of thinking of it is the amount of memory which has
+been written to.
++
+Kernel info: this corresponds to `pte_write()`.
+
+Effective Resident and Effective Mapped::
+Providing these figures is
+the purpose of Exmap. They can best be thought of as 'corrected'
+versions of the Mapped and Resident sizes.
++
+Rather than count a full page to each process, the page size is
+divided amongst all processes which make use of the page.
++
+Example: If a given (4096 byte) page is in use by 6 processes, each
+process will get 4096/6 == 682 bytes added to its effective size,
+rather than the 4096 which is added to the mapped size.
++
+Kernel info: two pages with the same `pfn` or `swp_entry` are considered
+the same.
+
+
+Feedback
+--------
+If you use `exmap`, I'd appreciate an email to help gauge the level of
+interest in this tool. If you find any problems or have any ideas or
+suggestions for improvement, I'd be very interested in hearing from
+you.  If you have any particular successes with
+optimising your system, again please let me know.
+
+Having 'exmap' in your subject line or body increases the chances that
+your message won't get lost in the spam.
+
+John Berthels <jjberthels@gmail.com> +
+http://www.berthels.co.uk/john/contact.html
