@@ -14,6 +14,35 @@ Each release
 - check /var/log/messages during make test
 	- add to tests themselves?
 
+
+For 0.20
+========
+
+- Build+run on modern systems:
+    - current ubuntu (x86_64)
+    - current fedora (set up vm)
+    - current openwrt (arm)
+
+- Ease installing developer dependencies for each supported platform
+    - add ".installed-deps" hidden target, removed by clean
+    - add platform detection (ubuntu, redhat, debian, openwrt)
+
+
+For 0.21
+========
+
+- build intermediate format of data
+        - to decouple gtk view
+        - (flat file? sqlite? how to capture elf info?)
+                - how much processing to do?
+        - review/incorporate exmap console work?
+
+Future
+======
+
+- ?? Add CRC checking (then contents checking) to estimate
+ how many pages are identical between a group of pids
+
 For 0.10
 ========
 
