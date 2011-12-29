@@ -20,7 +20,7 @@ EXES += egtest
 build: $(LIBS) $(EXES)
 
 trun: $(TROBJ) $(JLIB)
-	$(LD) $(TROBJ) -o trun $(LDFLAGS) -ljutil -L.
+	$(LD) $(TROBJ) -o trun -ljutil $(LDFLAGS) -L.
 
 $(JLIB): $(JOBJ)
 	ar rs $(JLIB) $(JOBJ)
