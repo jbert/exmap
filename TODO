@@ -35,6 +35,7 @@ For 0.21
         - to decouple gtk view
         - (flat file? sqlite? how to capture elf info?)
                 - how much processing to do?
+        - lib with C bindings?
         - review/incorporate exmap console work?
 
 Future
@@ -42,6 +43,8 @@ Future
 
 - ?? Add CRC checking (then contents checking) to estimate
  how many pages are identical between a group of pids
+
+- is there value in the elf symbol resolution stuff as sep lib?
 
 For 0.10
 ========
