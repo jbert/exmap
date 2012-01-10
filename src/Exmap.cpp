@@ -227,19 +227,19 @@ bool Process::load(SysInfoPtr &sys_info)
 	return false;
     }
 
-    remove_vdso_if_nopages();
+    remove_ignorable_if_nopages();
 
     return true;
 }
 
-void Process::remove_vdso_if_nopages()
+void Process::remove_ignorable_if_nopages()
 {
     stringstream pref;
-    pref << pid() << " remove_vdso_if_nopages: ";
+    pref << pid() << " remove_ignorable_if_nopages: ";
     list<VmaPtr>::iterator it;
     
     for (it = _vmas.begin(); it != _vmas.end(); ++it) {
-	if ((*it)->is_vdso() && (*it)->num_pages() == 0) {
+	if ((*it)->is_ignorable() && (*it)->num_pages() == 0) {
 	    dbg << pref.str() << "removing\n";
 	    _vmas.erase(it);
 	    return;
@@ -459,9 +459,9 @@ void Vma::add_pages(const list<Page> &pages)
     }
 }
 
-bool Vma::is_vdso()
+bool Vma::is_ignorable()
 {
-    return fname() == "[vdso]";
+    return fname() == "[vdso]" || fname() == "[vsyscall]";
 }
 
 bool Vma::is_file_backed()

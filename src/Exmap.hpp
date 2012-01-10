@@ -216,9 +216,9 @@ namespace Exmap
 
 	std::string to_string() const;
 
-	/// True if the vma is the special page - we generally wish to
-	/// ignore.
-	bool is_vdso();
+	/// True if the vma is a special page - we generally wish to
+	/// ignore. (vdso and vsyscall)
+	bool is_ignorable();
 	
 	/// True if there is a file backing this VMA (checks the
 	/// filename for specials like [anon], etc
@@ -427,7 +427,7 @@ namespace Exmap
 	/// Write some process info to the ostream
 	void print(std::ostream &os) const;
     private:
-	void remove_vdso_if_nopages();
+	void remove_ignorable_if_nopages();
 	boost::weak_ptr<Process> _selfptr;
 	bool load_page_info(SysInfoPtr &sys_info);
 	bool find_vma_by_addr(Elf::Address start,
