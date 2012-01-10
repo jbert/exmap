@@ -133,13 +133,14 @@ bool Snapshot::calculate_file_mappings()
     list<ProcessPtr>::iterator it;
     list<ProcessPtr> processes = procs();
 
+    bool all_worked = true;
     for (it = processes.begin(); it != processes.end(); ++it) {
 	if (!(*it)->calculate_maps(_file_pool)) {
 	    warn << "Failed to process maps for pid " << (*it)->pid() << "\n";
-	    return false;
+	    all_worked = false;
 	}
     }
-    return !_file_pool->files().empty();
+    return all_worked && !_file_pool->files().empty();
 }
 
 
@@ -1460,7 +1461,7 @@ bool MapCalculator::calc_map_for_seg(const FilePtr &file,
 {
     stringstream pref;
     string fname = file->name();
-    pref << _proc->pid() << " " << fname << " calc_map_for_seg: ";
+    pref << "pid: " << _proc->pid() << " " << fname << " calc_map_for_seg: ";
 
     dbg << pref.str() << "calc_map_for_seg "
 	<< seg->file_range()->to_string() << "\n";
