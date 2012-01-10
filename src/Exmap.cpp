@@ -352,7 +352,7 @@ bool Process::load_page_info(SysInfoPtr &sys_info)
 	    // This can happen, a process can alloc whilst we are
 	    // running
 	    warn << pref.str() << "can't find vma at "
-		 << hex << start_address << dec << ": " << _pid << "\n";
+		 << hex << start_address << dec << ": pid " << _pid << "\n";
 	    continue;
 	}
 	
@@ -377,8 +377,19 @@ bool Process::find_vma_by_addr(Address start,
 {
     list<VmaPtr>::const_iterator it;
 
+    static Address page_size = 0;
+    if (page_size == 0) {
+        page_size = getpagesize();
+    }
+
     for (it = _vmas.begin(); it != _vmas.end(); ++it) {
-	if ((*it)->start() == start) {
+        // More recent kernels (how recent?) trim the stack guard page
+        // from the vma. Assume we can't have VMAs of size 1 page and so
+        // allow a one-page slack (being slack allows us to work on both
+        // old and new kernels. If this causes problems, we could do this
+        // only if the vma has the name 'stack' or similar.
+        Address vma_start = (*it)->start();
+	if (vma_start == start || vma_start == start + page_size) {
 	    vma = *it;
 	    return true;
 	}
