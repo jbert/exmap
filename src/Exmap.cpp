@@ -29,7 +29,6 @@ ostream &operator<<(ostream &os, const Exmap::Map &map)
     return os;
 }
 
-
 // ------------------------------------------------------------
 
 Snapshot::Snapshot(SysInfoPtr &sys_info)
@@ -1470,7 +1469,8 @@ bool MapCalculator::calc_map_for_seg(const FilePtr &file,
 	warn << pref.str() << "empty vma list\n";
     }
     if(!filevmas.front()->is_file_backed()) {
-	warn << pref.str() << "non-file backed first vma\n";
+        const Vma &vma = *(filevmas.front());
+	warn << pref.str() << "non-file backed first vma: " << vma.to_string() << "\n";
 	return false;
     }
     
@@ -1510,7 +1510,7 @@ bool MapCalculator::calc_map_for_seg(const FilePtr &file,
 
     filevmas.pop_front();
     dbg << pref.str() << "consuming vma\n";
-    if (!filevmas.empty() && !filevmas.front()->is_file_backed()) {
+    while (!filevmas.empty() && !filevmas.front()->is_file_backed()) {
 	filevmas.pop_front();
 	dbg << pref.str() << "consuming anon vma\n";
     }
@@ -1539,6 +1539,12 @@ void MapCalculator::walk_vma_files()
 	if (!last_file_backed.empty()) {
 	    _fname_to_vmas[last_file_backed].push_back(vma);
 	}
+    }
+    std::map<std::string, std::list<Exmap::VmaPtr> >::iterator map_it;
+    for(map_it = _fname_to_vmas.begin(); map_it != _fname_to_vmas.end(); ++map_it) {
+        string fname = map_it->first;
+        size_t num = map_it->second.size();
+        dbg << "File " << fname << " has " << num << " vmas" << "\n";
     }
 }
 
