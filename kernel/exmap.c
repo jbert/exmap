@@ -36,6 +36,13 @@
 #include <linux/swapops.h>
 #include <linux/sched.h>
 
+#define DEBUG 1
+#ifdef DEBUG
+#define DLOG(...) printk (KERN_INFO __VA_ARGS__);
+#else
+#define DLOG(...)
+#endif
+
 /* Allow compilation on some kernels prior to 2.6.11 */
 
 #undef HAVE_PUD_T
@@ -277,9 +284,9 @@ static unsigned long user_atoul (const char __user * ubuf, int len)
 
 	buf[len] = 0;
 
-/*	printk(KERN_INFO "user_atoul: examining buffer [%s]\n", buf); */
-
+	DLOG("user_atoul: examining buffer [%s]\n", buf);
 	ret = simple_strtoul (buf, NULL, 0);
+	DLOG("user_atoul: returning %lu", ret);
 	return ret;
 }
 
@@ -361,15 +368,12 @@ static int exmap_show_next(char *buffer, int length)
 
 	while (local_data.vma_cursor < local_data.num_vmas) {
 		vma_data = local_data.vma_data + local_data.vma_cursor;
-//		printk (KERN_INFO
-//			"exmap: examining vma %08lx [%d/%d] %d\n",
-//			vma_data->vm_start,
-//			local_data.vma_cursor,
-//			local_data.num_vmas,
-//			vma_data->start_shown);
+		DLOG("exmap: examining vma %08lx [%d/%d] %d\n",
+			vma_data->vm_start,
+			local_data.vma_cursor,
+			local_data.num_vmas,
+			vma_data->start_shown);
 		if (!vma_data->start_shown) {
-//			printk (KERN_INFO
-//				"exmap: svs\n");
 			line_len = show_vma_start(vma_data,
 						  buffer + offset,
 						  length - offset);
@@ -404,6 +408,7 @@ int setup_from_pid(pid_t pid)
 	struct task_struct *tsk;
 	int errcode = -EINVAL;
 
+	DLOG("setup_from_pid: examining pid [%d]\n", pid);
 	tsk = my_find_task_by_pid(pid);
 	if (tsk == NULL) {
 		printk (KERN_ALERT
