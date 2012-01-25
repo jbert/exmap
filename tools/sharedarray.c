@@ -24,6 +24,8 @@ int do_shared_array_work(void)
 {
 	int i;
 	int sum = 0;
+
+        //printf("Page size is %d. Array size is %d\n", CURRENT_PAGE_SIZE, ARRAY_SIZE);
 	
 	for (i = 0; i < ARRAY_SIZE; ++i) {
 		sum += readme[i];

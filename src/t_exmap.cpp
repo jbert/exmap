@@ -170,9 +170,9 @@ bool ExmapTest::run()
 	long arrays_size = NUM_ARRAYS * ARRAY_SIZE;
 	float delta = std::abs(arrays_size - (long) sizes->val(Sizes::VM));
 	delta /= arrays_size;
-	ok(delta < 0.01, "Shared lib has correct size in each proc");
+        is_approx((long)sizes->val(Sizes::VM), arrays_size, delta, "Shared lib has correct size in each proc");
     }
-    
+
     Elf::SectionPtr text = shlib_file->elf()->section(".text");
     ok(text, "can find text section");
     ok(text->size() > 0, "text section has nonzero size");
